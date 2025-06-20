@@ -1,6 +1,6 @@
 from flask import Flask, request, jsonify, render_template_string
 import PyPDF2
-import docx
+import docx2txt
 import re
 from typing import Dict, List, Tuple
 import os
@@ -313,71 +313,63 @@ class ResumeJDMatcher:
                 return f"Could not read PDF file. Try converting to TXT format. Error: {str(e1)}"
     
     def extract_text_from_docx(self, file_path: str) -> str:
-        """Extract text from DOCX file with robust error handling"""
+        """Extract text from DOCX file using docx2txt (more robust)"""
         try:
-            # Try primary method with python-docx
-            doc = docx.Document(file_path)
-            text = ""
-            for paragraph in doc.paragraphs:
-                text += paragraph.text + "\n"
-            
-            # Also try to extract from tables
-            for table in doc.tables:
-                for row in table.rows:
-                    for cell in row.cells:
-                        text += cell.text + " "
-                text += "\n"
-            
-            if text.strip():
+            # Primary method: docx2txt (handles corrupt files better)
+            text = docx2txt.process(file_path)
+            if text and text.strip():
                 return text
             else:
-                return "No text content found in DOCX file"
+                return "No readable text found in DOCX file"
                 
         except Exception as e1:
-            print(f"Primary DOCX extraction failed: {e1}")
+            print(f"docx2txt extraction failed: {e1}")
             
-            # Fallback method: Try to extract as ZIP and read XML directly
+            # Fallback: Manual ZIP extraction
             try:
                 import zipfile
                 import xml.etree.ElementTree as ET
                 
                 text_content = ""
                 with zipfile.ZipFile(file_path, 'r') as zip_file:
-                    # Try to read document.xml directly
                     try:
+                        # Read document.xml directly
                         with zip_file.open('word/document.xml') as doc_xml:
-                            tree = ET.parse(doc_xml)
-                            root = tree.getroot()
+                            content = doc_xml.read().decode('utf-8', errors='ignore')
                             
-                            # Extract text from all text nodes
-                            for elem in root.iter():
-                                if elem.text:
-                                    text_content += elem.text + " "
-                                    
-                    except Exception as e2:
-                        print(f"XML extraction failed: {e2}")
+                            # Extract text using regex patterns
+                            text_patterns = [
+                                r'<w:t[^>]*>([^<]+)</w:t>',  # Standard text
+                                r'<w:t>([^<]+)</w:t>',       # Simple text
+                                r'>([^<]{3,})<'             # Any text between tags
+                            ]
+                            
+                            for pattern in text_patterns:
+                                matches = re.findall(pattern, content)
+                                text_content += ' '.join(matches) + ' '
+                                
+                    except Exception as xml_error:
+                        print(f"XML extraction failed: {xml_error}")
                         
-                    # If that fails, try to get any readable text files
-                    if not text_content.strip():
+                        # Last resort: try any readable files in the ZIP
                         for file_name in zip_file.namelist():
-                            if file_name.endswith('.xml') and 'word/' in file_name:
+                            if file_name.endswith(('.xml', '.rels')) and not file_name.startswith('word/media'):
                                 try:
-                                    with zip_file.open(file_name) as xml_file:
-                                        content = xml_file.read().decode('utf-8', errors='ignore')
-                                        # Simple text extraction from XML
-                                        import re
-                                        text_matches = re.findall(r'<w:t[^>]*>([^<]+)</w:t>', content)
-                                        text_content += ' '.join(text_matches)
+                                    with zip_file.open(file_name) as f:
+                                        content = f.read().decode('utf-8', errors='ignore')
+                                        # Extract any readable text
+                                        readable_text = re.findall(r'[a-zA-Z0-9\s]{10,}', content)
+                                        text_content += ' '.join(readable_text[:20])  # Limit to avoid noise
                                 except:
                                     continue
                 
                 if text_content.strip():
                     return text_content
                 else:
-                    return f"DOCX file appears corrupted or encrypted. Error: {str(e1)}"
+                    return "DOCX file appears corrupted. Please convert to PDF or paste text directly."
                     
             except Exception as e2:
-                return f"Could not extract text from DOCX file. Try converting to PDF or TXT format. Error: {str(e1)}"
+                return "Could not read DOCX file. Please try PDF format or paste text directly."
     
     def extract_text_from_txt(self, file_path: str) -> str:
         """Extract text from TXT file"""
@@ -735,22 +727,33 @@ def index():
     </style>
 </head>
 <body>
-    <div class="container">
+            <div class="container">
         <h1>🎯 Resume-JD Matcher</h1>
+        
+        <div class="file-tip">
+            <strong>📁 File Upload Tips:</strong>
+            <ul style="margin: 5px 0; padding-left: 20px;">
+                <li>If DOCX files fail to upload, try saving as PDF first</li>
+                <li>For best results, copy-paste text directly into the text areas</li>
+                <li>Supported formats: PDF, DOCX, TXT</li>
+            </ul>
+        </div>
         
         <form id="matchForm" enctype="multipart/form-data">
             <div class="upload-section">
                 <div class="upload-box">
                     <h3>📄 Resume</h3>
                     <input type="file" id="resume" name="resume" accept=".pdf,.docx,.txt">
-                    <p>Or paste text:</p>
+                    <p>Supported formats: PDF, DOCX, TXT</p>
+                    <p><small><strong>Having file issues?</strong> Try copy-pasting the text instead!</small></p>
                     <textarea id="resumeText" name="resumeText" placeholder="Paste resume content here..."></textarea>
                 </div>
                 
                 <div class="upload-box">
                     <h3>📋 Job Description</h3>
                     <input type="file" id="jd" name="jd" accept=".pdf,.docx,.txt">
-                    <p>Or paste text:</p>
+                    <p>Supported formats: PDF, DOCX, TXT</p>
+                    <p><small><strong>Having file issues?</strong> Try copy-pasting the text instead!</small></p>
                     <textarea id="jdText" name="jdText" placeholder="Paste job description here..."></textarea>
                 </div>
             </div>
