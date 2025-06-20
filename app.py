@@ -22,40 +22,73 @@ def allowed_file(filename):
 def extract_text_from_file(file):
     """Extract text from uploaded files"""
     filename = secure_filename(file.filename)
-    file_ext = filename.rsplit('.', 1)[1].lower()
+    file_ext = filename.rsplit('.', 1)[1].lower() if '.' in filename else ''
+    
+    print(f"Extracting text from {filename}, extension: {file_ext}")
     
     try:
         if file_ext == 'txt':
-            return file.read().decode('utf-8')
+            content = file.read()
+            try:
+                text = content.decode('utf-8')
+            except UnicodeDecodeError:
+                text = content.decode('utf-8', errors='ignore')
+            print(f"TXT file processed: {len(text)} characters")
+            return text
         
         elif file_ext == 'pdf':
-            pdf_reader = PyPDF2.PdfReader(io.BytesIO(file.read()))
-            text = ""
-            for page in pdf_reader.pages:
-                text += page.extract_text() + "\n"
-            return text
+            try:
+                file_content = file.read()
+                pdf_reader = PyPDF2.PdfReader(io.BytesIO(file_content))
+                text = ""
+                for page_num, page in enumerate(pdf_reader.pages):
+                    page_text = page.extract_text()
+                    text += page_text + "\n"
+                    print(f"PDF page {page_num + 1} processed")
+                print(f"PDF file processed: {len(text)} characters")
+                return text
+            except Exception as e:
+                print(f"PDF processing error: {str(e)}")
+                return f"Error processing PDF {filename}: {str(e)}"
         
         elif file_ext == 'docx':
-            doc = docx.Document(io.BytesIO(file.read()))
-            text = ""
-            for paragraph in doc.paragraphs:
-                text += paragraph.text + "\n"
-            return text
+            try:
+                file_content = file.read()
+                doc = docx.Document(io.BytesIO(file_content))
+                text = ""
+                for paragraph in doc.paragraphs:
+                    text += paragraph.text + "\n"
+                print(f"DOCX file processed: {len(text)} characters")
+                return text
+            except Exception as e:
+                print(f"DOCX processing error: {str(e)}")
+                return f"Error processing DOCX {filename}: {str(e)}"
         
         elif file_ext == 'doc':
-            # For .doc files, we'll try to read as text (basic support)
             try:
-                content = file.read().decode('utf-8', errors='ignore')
-                # Basic cleanup for .doc files
-                text = re.sub(r'[^\x20-\x7E\n]', ' ', content)
-                return text
-            except:
-                return "Error: Could not parse .doc file. Please convert to .docx or .txt format."
+                content = file.read()
+                # Try different encodings for .doc files
+                for encoding in ['utf-8', 'latin-1', 'cp1252']:
+                    try:
+                        text = content.decode(encoding, errors='ignore')
+                        # Basic cleanup for .doc files
+                        text = re.sub(r'[^\x20-\x7E\n\r\t]', ' ', text)
+                        text = re.sub(r'\s+', ' ', text)
+                        print(f"DOC file processed with {encoding}: {len(text)} characters")
+                        return text
+                    except:
+                        continue
+                return f"Could not decode .doc file {filename}. Please convert to .docx format."
+            except Exception as e:
+                print(f"DOC processing error: {str(e)}")
+                return f"Error processing DOC {filename}: {str(e)}"
+        
+        else:
+            return f"Unsupported file format: {file_ext}"
     
     except Exception as e:
+        print(f"General file processing error for {filename}: {str(e)}")
         return f"Error extracting text from {filename}: {str(e)}"
-    
-    return "Error: Unsupported file format"
 
 # HTML Template embedded in Python (no separate templates folder needed)
 HTML_TEMPLATE = """
@@ -444,17 +477,34 @@ Embedded Systems Engineer
         }
 
         function handleFiles(files, type) {
+            console.log(`Handling ${files.length} files for ${type}`);
+            
             const validFiles = files.filter(file => {
                 const ext = file.name.split('.').pop().toLowerCase();
-                return ['txt', 'pdf', 'doc', 'docx'].includes(ext);
+                const isValid = ['txt', 'pdf', 'doc', 'docx'].includes(ext);
+                console.log(`File ${file.name}: ${isValid ? 'valid' : 'invalid'}`);
+                return isValid;
             });
+
+            console.log(`${validFiles.length} valid files out of ${files.length}`);
+
+            if (validFiles.length === 0) {
+                showError('No valid files selected. Please upload PDF, DOC, DOCX, or TXT files.');
+                return;
+            }
 
             if (type === 'jd') {
                 uploadedJDFiles = uploadedJDFiles.concat(validFiles);
                 displayUploadedFiles(uploadedJDFiles, 'jdUploadedFiles', 'jd');
+                console.log(`Total JD files: ${uploadedJDFiles.length}`);
             } else {
                 uploadedResumeFiles = uploadedResumeFiles.concat(validFiles);
                 displayUploadedFiles(uploadedResumeFiles, 'resumeUploadedFiles', 'resume');
+                console.log(`Total resume files: ${uploadedResumeFiles.length}`);
+            }
+
+            if (validFiles.length < files.length) {
+                showError(`${files.length - validFiles.length} file(s) were skipped (unsupported format). Only PDF, DOC, DOCX, and TXT files are supported.`);
             }
         }
 
@@ -492,7 +542,7 @@ Embedded Systems Engineer
 
         async function extractTextFromFiles(files) {
             const formData = new FormData();
-            files.forEach(file => {
+            files.forEach((file, index) => {
                 formData.append('files', file);
             });
 
@@ -502,13 +552,18 @@ Embedded Systems Engineer
                     body: formData
                 });
                 
+                if (!response.ok) {
+                    throw new Error(`HTTP error! status: ${response.status}`);
+                }
+                
                 const data = await response.json();
                 if (data.success) {
                     return data.texts.join('\n---\n');
                 } else {
-                    throw new Error(data.error);
+                    throw new Error(data.error || 'Unknown error');
                 }
             } catch (error) {
+                console.error('File extraction error:', error);
                 throw new Error('Failed to extract text from files: ' + error.message);
             }
         }
@@ -518,16 +573,38 @@ Embedded Systems Engineer
             let resumes = document.getElementById('resumes').value.trim();
             
             try {
+                // Show loading early
+                document.getElementById('loading').style.display = 'block';
+                document.getElementById('results').style.display = 'none';
+                document.getElementById('error').style.display = 'none';
+                document.getElementById('analyzeBtn').disabled = true;
+
                 // Extract text from uploaded JD files if any
                 if (uploadedJDFiles.length > 0) {
-                    const jdFromFiles = await extractTextFromFiles(uploadedJDFiles);
-                    jobDescription = jdFromFiles + (jobDescription ? '\n' + jobDescription : '');
+                    console.log('Processing JD files:', uploadedJDFiles.length);
+                    try {
+                        const jdFromFiles = await extractTextFromFiles(uploadedJDFiles);
+                        jobDescription = jdFromFiles + (jobDescription ? '\n' + jobDescription : '');
+                        console.log('JD text extracted successfully');
+                    } catch (error) {
+                        console.error('JD file processing error:', error);
+                        showError('Error processing JD files: ' + error.message);
+                        return;
+                    }
                 }
 
                 // Extract text from uploaded resume files if any
                 if (uploadedResumeFiles.length > 0) {
-                    const resumesFromFiles = await extractTextFromFiles(uploadedResumeFiles);
-                    resumes = resumesFromFiles + (resumes ? '\n---\n' + resumes : '');
+                    console.log('Processing resume files:', uploadedResumeFiles.length);
+                    try {
+                        const resumesFromFiles = await extractTextFromFiles(uploadedResumeFiles);
+                        resumes = resumesFromFiles + (resumes ? '\n---\n' + resumes : '');
+                        console.log('Resume text extracted successfully');
+                    } catch (error) {
+                        console.error('Resume file processing error:', error);
+                        showError('Error processing resume files: ' + error.message);
+                        return;
+                    }
                 }
 
                 if (!jobDescription || !resumes) {
@@ -535,12 +612,7 @@ Embedded Systems Engineer
                     return;
                 }
 
-                // Show loading
-                document.getElementById('loading').style.display = 'block';
-                document.getElementById('results').style.display = 'none';
-                document.getElementById('error').style.display = 'none';
-                document.getElementById('analyzeBtn').disabled = true;
-
+                console.log('Sending analysis request...');
                 const response = await fetch('/analyze', {
                     method: 'POST',
                     headers: {
@@ -552,6 +624,10 @@ Embedded Systems Engineer
                     })
                 });
 
+                if (!response.ok) {
+                    throw new Error(`HTTP error! status: ${response.status}`);
+                }
+
                 const data = await response.json();
 
                 if (data.success) {
@@ -560,11 +636,12 @@ Embedded Systems Engineer
                     showError(data.error || 'Analysis failed');
                 }
             } catch (error) {
+                console.error('Analysis error:', error);
                 showError('Error: ' + error.message);
+            } finally {
+                document.getElementById('loading').style.display = 'none';
+                document.getElementById('analyzeBtn').disabled = false;
             }
-
-            document.getElementById('loading').style.display = 'none';
-            document.getElementById('analyzeBtn').disabled = false;
         }
 
         function showError(message) {
@@ -899,20 +976,38 @@ def health():
 def extract_text():
     """Extract text from uploaded files"""
     try:
+        print("Extract text endpoint called")  # Debug log
+        
         if 'files' not in request.files:
+            print("No 'files' key in request.files")
             return jsonify({'success': False, 'error': 'No files uploaded'}), 400
         
         files = request.files.getlist('files')
+        print(f"Number of files received: {len(files)}")
+        
+        if not files or all(file.filename == '' for file in files):
+            print("All files are empty")
+            return jsonify({'success': False, 'error': 'No files selected'}), 400
+        
         extracted_texts = []
         
-        for file in files:
+        for i, file in enumerate(files):
+            print(f"Processing file {i+1}: {file.filename}")
+            
             if file and file.filename != '':
                 if allowed_file(file.filename):
-                    text = extract_text_from_file(file)
-                    extracted_texts.append(f"=== {file.filename} ===\n{text}")
+                    try:
+                        text = extract_text_from_file(file)
+                        print(f"Extracted {len(text)} characters from {file.filename}")
+                        extracted_texts.append(f"=== {file.filename} ===\n{text}")
+                    except Exception as e:
+                        print(f"Error processing file {file.filename}: {str(e)}")
+                        return jsonify({'success': False, 'error': f'Error processing {file.filename}: {str(e)}'}), 500
                 else:
+                    print(f"File type not supported: {file.filename}")
                     return jsonify({'success': False, 'error': f'File type not supported: {file.filename}'}), 400
         
+        print(f"Successfully processed {len(extracted_texts)} files")
         return jsonify({
             'success': True,
             'texts': extracted_texts,
@@ -920,6 +1015,7 @@ def extract_text():
         })
         
     except Exception as e:
+        print(f"Extract text error: {str(e)}")
         return jsonify({'success': False, 'error': f'File processing failed: {str(e)}'}), 500
 
 @app.route('/analyze', methods=['POST'])
