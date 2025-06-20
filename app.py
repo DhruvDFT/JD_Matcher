@@ -35,41 +35,47 @@ class ResumeJDMatcher:
     
     def clean_and_tokenize(self, text: str) -> List[str]:
         """Clean text and extract meaningful tokens"""
-        import string
-        
-        # Convert to lowercase and remove extra whitespace
-        text = re.sub(r'\s+', ' ', text.lower().strip())
-        
-        # Remove special characters but keep alphanumeric and spaces
-        text = re.sub(r'[^\w\s\+\-\.]', ' ', text)
-        
-        # Split into words
-        words = text.split()
-        
-        # Remove stop words and very short words
-        meaningful_words = [word for word in words if word not in self.stop_words and len(word) > 2]
-        
-        return meaningful_words
+        try:
+            # Convert to lowercase and remove extra whitespace
+            text = re.sub(r'\s+', ' ', text.lower().strip())
+            
+            # Remove special characters but keep alphanumeric and spaces
+            text = re.sub(r'[^\w\s\+\-\.]', ' ', text)
+            
+            # Split into words
+            words = text.split()
+            
+            # Remove stop words and very short words
+            meaningful_words = [word for word in words if word not in self.stop_words and len(word) > 2]
+            
+            return meaningful_words
+        except Exception as e:
+            print(f"Error in clean_and_tokenize: {e}")
+            return []
     
     def extract_phrases(self, text: str, max_phrase_length: int = 3) -> List[str]:
         """Extract both individual words and meaningful phrases"""
-        words = self.clean_and_tokenize(text)
-        phrases = []
-        
-        # Add individual words
-        phrases.extend(words)
-        
-        # Add 2-word phrases
-        for i in range(len(words) - 1):
-            phrase = f"{words[i]} {words[i+1]}"
-            phrases.append(phrase)
-        
-        # Add 3-word phrases 
-        for i in range(len(words) - 2):
-            phrase = f"{words[i]} {words[i+1]} {words[i+2]}"
-            phrases.append(phrase)
-        
-        return phrases
+        try:
+            words = self.clean_and_tokenize(text)
+            phrases = []
+            
+            # Add individual words
+            phrases.extend(words)
+            
+            # Add 2-word phrases
+            for i in range(len(words) - 1):
+                phrase = f"{words[i]} {words[i+1]}"
+                phrases.append(phrase)
+            
+            # Add 3-word phrases 
+            for i in range(len(words) - 2):
+                phrase = f"{words[i]} {words[i+1]} {words[i+2]}"
+                phrases.append(phrase)
+            
+            return phrases
+        except Exception as e:
+            print(f"Error in extract_phrases: {e}")
+            return []
     
     def extract_jd_requirements(self, jd_text: str) -> Dict[str, List[str]]:
         """Extract requirements from JD with scoring weights"""
@@ -130,99 +136,130 @@ class ResumeJDMatcher:
     
     def calculate_string_match_score(self, resume_text: str, jd_text: str) -> Dict:
         """Calculate match score based on string matching"""
-        
-        # Extract requirements from JD
-        jd_requirements = self.extract_jd_requirements(jd_text)
-        
-        # Extract keywords from resume
-        resume_keywords = self.extract_resume_keywords(resume_text)
-        resume_keywords_lower = [kw.lower() for kw in resume_keywords]
-        
-        # Calculate matches for each category
-        category_scores = {}
-        total_weighted_score = 0
-        total_possible_score = 0
-        detailed_matches = {}
-        
-        for category, requirements in jd_requirements.items():
-            if not requirements:  # Skip empty categories
-                continue
+        try:
+            # Basic validation
+            if not resume_text or not jd_text:
+                return {
+                    'overall_score': 0,
+                    'skill_score': 0,
+                    'experience_score': 0,
+                    'recommendation': 'DO NOT SEND',
+                    'status': '❌',
+                    'reason': 'Missing resume or job description text',
+                    'resume_experience': 0,
+                    'required_experience': 0,
+                    'category_breakdown': {},
+                    'total_jd_requirements': 0,
+                    'total_matches': 0
+                }
+            
+            # Extract requirements from JD
+            jd_requirements = self.extract_jd_requirements(jd_text)
+            
+            # Extract keywords from resume
+            resume_keywords = self.extract_resume_keywords(resume_text)
+            resume_keywords_lower = [kw.lower() for kw in resume_keywords]
+            
+            # Calculate matches for each category
+            category_scores = {}
+            total_weighted_score = 0
+            total_possible_score = 0
+            
+            for category, requirements in jd_requirements.items():
+                if not requirements:  # Skip empty categories
+                    continue
+                    
+                weight = self.keyword_weights.get(category, 1.0)
+                matches = []
+                missing = []
                 
-            weight = self.keyword_weights.get(category, 1.0)
-            matches = []
-            missing = []
+                for req in requirements:
+                    req_lower = req.lower()
+                    # Check for exact match or partial match
+                    if req_lower in resume_keywords_lower:
+                        matches.append(req)
+                    elif any(req_lower in resume_kw for resume_kw in resume_keywords_lower):
+                        matches.append(req)
+                    elif any(resume_kw in req_lower for resume_kw in resume_keywords_lower if len(resume_kw) > 3):
+                        matches.append(req)
+                    else:
+                        missing.append(req)
+                
+                # Calculate category score
+                category_match_rate = len(matches) / len(requirements) if requirements else 0
+                category_score = category_match_rate * 100
+                weighted_score = category_score * weight
+                
+                category_scores[category] = {
+                    'score': round(category_score, 1),
+                    'weight': weight,
+                    'weighted_score': round(weighted_score, 1),
+                    'matches': matches,
+                    'missing': missing,
+                    'total_requirements': len(requirements)
+                }
+                
+                total_weighted_score += weighted_score
+                total_possible_score += 100 * weight
             
-            for req in requirements:
-                req_lower = req.lower()
-                # Check for exact match or partial match
-                if req_lower in resume_keywords_lower:
-                    matches.append(req)
-                elif any(req_lower in resume_kw for resume_kw in resume_keywords_lower):
-                    matches.append(req)
-                elif any(resume_kw in req_lower for resume_kw in resume_keywords_lower if len(resume_kw) > 3):
-                    matches.append(req)
-                else:
-                    missing.append(req)
+            # Calculate overall score
+            overall_score = (total_weighted_score / total_possible_score * 100) if total_possible_score > 0 else 0
             
-            # Calculate category score
-            category_match_rate = len(matches) / len(requirements) if requirements else 0
-            category_score = category_match_rate * 100
-            weighted_score = category_score * weight
+            # Extract experience
+            resume_exp = self.extract_experience(resume_text)
+            jd_exp = self.extract_experience(jd_text)
+            exp_score = min(resume_exp / jd_exp * 100, 100) if jd_exp > 0 else 100
             
-            category_scores[category] = {
-                'score': round(category_score, 1),
-                'weight': weight,
-                'weighted_score': round(weighted_score, 1),
-                'matches': matches,
-                'missing': missing,
-                'total_requirements': len(requirements)
+            # Final combined score (80% skills, 20% experience)
+            final_score = (overall_score * 0.8) + (exp_score * 0.2)
+            
+            # Determine recommendation based on final score
+            if final_score >= 75:
+                recommendation = "SEND"
+                status = "✅"
+                reason = "Strong keyword match with requirements"
+            elif final_score >= 60:
+                recommendation = "MAYBE SEND" 
+                status = "⚠️"
+                reason = "Moderate match, review specific gaps"
+            elif final_score >= 45:
+                recommendation = "MAYBE SEND"
+                status = "⚠️" 
+                reason = "Some important keywords missing, but potential fit"
+            else:
+                recommendation = "DO NOT SEND"
+                status = "❌"
+                reason = "Insufficient keyword match with requirements"
+            
+            return {
+                'overall_score': round(final_score, 1),
+                'skill_score': round(overall_score, 1),
+                'experience_score': round(exp_score, 1),
+                'recommendation': recommendation,
+                'status': status,
+                'reason': reason,
+                'resume_experience': resume_exp,
+                'required_experience': jd_exp,
+                'category_breakdown': category_scores,
+                'total_jd_requirements': sum(len(reqs) for reqs in jd_requirements.values()),
+                'total_matches': sum(len(cat['matches']) for cat in category_scores.values())
             }
             
-            total_weighted_score += weighted_score
-            total_possible_score += 100 * weight
-        
-        # Calculate overall score
-        overall_score = (total_weighted_score / total_possible_score * 100) if total_possible_score > 0 else 0
-        
-        # Extract experience
-        resume_exp = self.extract_experience(resume_text)
-        jd_exp = self.extract_experience(jd_text)
-        exp_score = min(resume_exp / jd_exp * 100, 100) if jd_exp > 0 else 100
-        
-        # Final combined score (80% skills, 20% experience)
-        final_score = (overall_score * 0.8) + (exp_score * 0.2)
-        
-        # Determine recommendation based on final score
-        if final_score >= 75:
-            recommendation = "SEND"
-            status = "✅"
-            reason = "Strong keyword match with requirements"
-        elif final_score >= 60:
-            recommendation = "MAYBE SEND" 
-            status = "⚠️"
-            reason = "Moderate match, review specific gaps"
-        elif final_score >= 45:
-            recommendation = "MAYBE SEND"
-            status = "⚠️" 
-            reason = "Some important keywords missing, but potential fit"
-        else:
-            recommendation = "DO NOT SEND"
-            status = "❌"
-            reason = "Insufficient keyword match with requirements"
-        
-        return {
-            'overall_score': round(final_score, 1),
-            'skill_score': round(overall_score, 1),
-            'experience_score': round(exp_score, 1),
-            'recommendation': recommendation,
-            'status': status,
-            'reason': reason,
-            'resume_experience': resume_exp,
-            'required_experience': jd_exp,
-            'category_breakdown': category_scores,
-            'total_jd_requirements': sum(len(reqs) for reqs in jd_requirements.values()),
-            'total_matches': sum(len(cat['matches']) for cat in category_scores.values())
-        }
+        except Exception as e:
+            print(f"Error in calculate_string_match_score: {e}")
+            return {
+                'overall_score': 0,
+                'skill_score': 0,
+                'experience_score': 0,
+                'recommendation': 'ERROR',
+                'status': '❌',
+                'reason': f'Analysis error: {str(e)}',
+                'resume_experience': 0,
+                'required_experience': 0,
+                'category_breakdown': {},
+                'total_jd_requirements': 0,
+                'total_matches': 0
+            }
     
     def extract_text_from_pdf(self, file_path: str) -> str:
         """Extract text from PDF file"""
