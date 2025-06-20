@@ -4,8 +4,58 @@ import os
 import json
 from collections import defaultdict
 import math
+from werkzeug.utils import secure_filename
+import PyPDF2
+import docx
+import io
 
 app = Flask(__name__)
+app.config['MAX_CONTENT_LENGTH'] = 16 * 1024 * 1024  # 16MB max file size
+app.config['UPLOAD_FOLDER'] = '/tmp'
+
+# Allowed file extensions
+ALLOWED_EXTENSIONS = {'txt', 'pdf', 'doc', 'docx'}
+
+def allowed_file(filename):
+    return '.' in filename and filename.rsplit('.', 1)[1].lower() in ALLOWED_EXTENSIONS
+
+def extract_text_from_file(file):
+    """Extract text from uploaded files"""
+    filename = secure_filename(file.filename)
+    file_ext = filename.rsplit('.', 1)[1].lower()
+    
+    try:
+        if file_ext == 'txt':
+            return file.read().decode('utf-8')
+        
+        elif file_ext == 'pdf':
+            pdf_reader = PyPDF2.PdfReader(io.BytesIO(file.read()))
+            text = ""
+            for page in pdf_reader.pages:
+                text += page.extract_text() + "\n"
+            return text
+        
+        elif file_ext == 'docx':
+            doc = docx.Document(io.BytesIO(file.read()))
+            text = ""
+            for paragraph in doc.paragraphs:
+                text += paragraph.text + "\n"
+            return text
+        
+        elif file_ext == 'doc':
+            # For .doc files, we'll try to read as text (basic support)
+            try:
+                content = file.read().decode('utf-8', errors='ignore')
+                # Basic cleanup for .doc files
+                text = re.sub(r'[^\x20-\x7E\n]', ' ', content)
+                return text
+            except:
+                return "Error: Could not parse .doc file. Please convert to .docx or .txt format."
+    
+    except Exception as e:
+        return f"Error extracting text from {filename}: {str(e)}"
+    
+    return "Error: Unsupported file format"
 
 # HTML Template embedded in Python (no separate templates folder needed)
 HTML_TEMPLATE = """
@@ -294,6 +344,17 @@ HTML_TEMPLATE = """
         <div class="main-content">
             <div class="input-section">
                 <h3>📋 Job Description</h3>
+                <div class="file-upload" onclick="document.getElementById('jdFiles').click()" 
+                     ondrop="handleFileDrop(event, 'jd')" ondragover="handleDragOver(event)" ondragleave="handleDragLeave(event)">
+                    <input type="file" id="jdFiles" accept=".txt,.pdf,.doc,.docx" multiple onchange="handleFileSelect(event, 'jd')">
+                    <div>📁 <strong>Upload JD Files</strong></div>
+                    <div class="upload-text">Drag & drop files here or click to browse</div>
+                    <div class="upload-text">Supports: PDF, DOC, DOCX, TXT</div>
+                </div>
+                <div id="jdUploadedFiles" class="uploaded-files"></div>
+                
+                <div class="or-divider"><span>OR</span></div>
+                
                 <textarea id="jobDescription" placeholder="Paste your VLSI/Embedded job description here...
 
 Example:
@@ -307,6 +368,17 @@ Example:
 
             <div class="input-section">
                 <h3>👥 Resumes</h3>
+                <div class="file-upload" onclick="document.getElementById('resumeFiles').click()" 
+                     ondrop="handleFileDrop(event, 'resume')" ondragover="handleDragOver(event)" ondragleave="handleDragLeave(event)">
+                    <input type="file" id="resumeFiles" accept=".txt,.pdf,.doc,.docx" multiple onchange="handleFileSelect(event, 'resume')">
+                    <div>👤 <strong>Upload Resume Files</strong></div>
+                    <div class="upload-text">Drag & drop multiple resumes here or click to browse</div>
+                    <div class="upload-text">Supports: PDF, DOC, DOCX, TXT</div>
+                </div>
+                <div id="resumeUploadedFiles" class="uploaded-files"></div>
+                
+                <div class="or-divider"><span>OR</span></div>
+                
                 <textarea id="resumes" placeholder="Paste resumes here (separate multiple resumes with '---')...
 
 Example:
@@ -344,22 +416,131 @@ Embedded Systems Engineer
     </div>
 
     <script>
-        async function analyzeMatches() {
-            const jobDescription = document.getElementById('jobDescription').value.trim();
-            const resumes = document.getElementById('resumes').value.trim();
+        // Global variables for file handling
+        let uploadedJDFiles = [];
+        let uploadedResumeFiles = [];
+
+        // File drag and drop handlers
+        function handleDragOver(event) {
+            event.preventDefault();
+            event.currentTarget.classList.add('dragover');
+        }
+
+        function handleDragLeave(event) {
+            event.currentTarget.classList.remove('dragover');
+        }
+
+        function handleFileDrop(event, type) {
+            event.preventDefault();
+            event.currentTarget.classList.remove('dragover');
             
-            if (!jobDescription || !resumes) {
-                showError('Please provide both job description and resumes!');
+            const files = Array.from(event.dataTransfer.files);
+            handleFiles(files, type);
+        }
+
+        function handleFileSelect(event, type) {
+            const files = Array.from(event.target.files);
+            handleFiles(files, type);
+        }
+
+        function handleFiles(files, type) {
+            const validFiles = files.filter(file => {
+                const ext = file.name.split('.').pop().toLowerCase();
+                return ['txt', 'pdf', 'doc', 'docx'].includes(ext);
+            });
+
+            if (type === 'jd') {
+                uploadedJDFiles = uploadedJDFiles.concat(validFiles);
+                displayUploadedFiles(uploadedJDFiles, 'jdUploadedFiles', 'jd');
+            } else {
+                uploadedResumeFiles = uploadedResumeFiles.concat(validFiles);
+                displayUploadedFiles(uploadedResumeFiles, 'resumeUploadedFiles', 'resume');
+            }
+        }
+
+        function displayUploadedFiles(files, containerId, type) {
+            const container = document.getElementById(containerId);
+            
+            if (files.length === 0) {
+                container.style.display = 'none';
                 return;
             }
 
-            // Show loading
-            document.getElementById('loading').style.display = 'block';
-            document.getElementById('results').style.display = 'none';
-            document.getElementById('error').style.display = 'none';
-            document.getElementById('analyzeBtn').disabled = true;
+            container.style.display = 'block';
+            container.innerHTML = `
+                <div style="font-weight: bold; margin-bottom: 8px;">
+                    📎 ${files.length} file(s) uploaded:
+                </div>
+                ${files.map((file, index) => `
+                    <div class="file-item">
+                        <span>📄 ${file.name} (${(file.size / 1024).toFixed(1)} KB)</span>
+                        <span class="remove-file" onclick="removeFile(${index}, '${type}')">&times;</span>
+                    </div>
+                `).join('')}
+            `;
+        }
+
+        function removeFile(index, type) {
+            if (type === 'jd') {
+                uploadedJDFiles.splice(index, 1);
+                displayUploadedFiles(uploadedJDFiles, 'jdUploadedFiles', 'jd');
+            } else {
+                uploadedResumeFiles.splice(index, 1);
+                displayUploadedFiles(uploadedResumeFiles, 'resumeUploadedFiles', 'resume');
+            }
+        }
+
+        async function extractTextFromFiles(files) {
+            const formData = new FormData();
+            files.forEach(file => {
+                formData.append('files', file);
+            });
 
             try {
+                const response = await fetch('/extract-text', {
+                    method: 'POST',
+                    body: formData
+                });
+                
+                const data = await response.json();
+                if (data.success) {
+                    return data.texts.join('\n---\n');
+                } else {
+                    throw new Error(data.error);
+                }
+            } catch (error) {
+                throw new Error('Failed to extract text from files: ' + error.message);
+            }
+        }
+
+        async function analyzeMatches() {
+            let jobDescription = document.getElementById('jobDescription').value.trim();
+            let resumes = document.getElementById('resumes').value.trim();
+            
+            try {
+                // Extract text from uploaded JD files if any
+                if (uploadedJDFiles.length > 0) {
+                    const jdFromFiles = await extractTextFromFiles(uploadedJDFiles);
+                    jobDescription = jdFromFiles + (jobDescription ? '\n' + jobDescription : '');
+                }
+
+                // Extract text from uploaded resume files if any
+                if (uploadedResumeFiles.length > 0) {
+                    const resumesFromFiles = await extractTextFromFiles(uploadedResumeFiles);
+                    resumes = resumesFromFiles + (resumes ? '\n---\n' + resumes : '');
+                }
+
+                if (!jobDescription || !resumes) {
+                    showError('Please provide both job description and resumes (either upload files or paste text)!');
+                    return;
+                }
+
+                // Show loading
+                document.getElementById('loading').style.display = 'block';
+                document.getElementById('results').style.display = 'none';
+                document.getElementById('error').style.display = 'none';
+                document.getElementById('analyzeBtn').disabled = true;
+
                 const response = await fetch('/analyze', {
                     method: 'POST',
                     headers: {
@@ -379,7 +560,7 @@ Embedded Systems Engineer
                     showError(data.error || 'Analysis failed');
                 }
             } catch (error) {
-                showError('Network error: ' + error.message);
+                showError('Error: ' + error.message);
             }
 
             document.getElementById('loading').style.display = 'none';
@@ -713,6 +894,33 @@ def index():
 @app.route('/health')
 def health():
     return jsonify({'status': 'OK', 'message': 'VLSI Resume Matcher is running!', 'python': True})
+
+@app.route('/extract-text', methods=['POST'])
+def extract_text():
+    """Extract text from uploaded files"""
+    try:
+        if 'files' not in request.files:
+            return jsonify({'success': False, 'error': 'No files uploaded'}), 400
+        
+        files = request.files.getlist('files')
+        extracted_texts = []
+        
+        for file in files:
+            if file and file.filename != '':
+                if allowed_file(file.filename):
+                    text = extract_text_from_file(file)
+                    extracted_texts.append(f"=== {file.filename} ===\n{text}")
+                else:
+                    return jsonify({'success': False, 'error': f'File type not supported: {file.filename}'}), 400
+        
+        return jsonify({
+            'success': True,
+            'texts': extracted_texts,
+            'count': len(extracted_texts)
+        })
+        
+    except Exception as e:
+        return jsonify({'success': False, 'error': f'File processing failed: {str(e)}'}), 500
 
 @app.route('/analyze', methods=['POST'])
 def analyze_resumes():
