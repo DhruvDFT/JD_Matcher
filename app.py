@@ -15,31 +15,213 @@ os.makedirs('uploads', exist_ok=True)
 
 class ResumeJDMatcher:
     def __init__(self):
-        self.technical_keywords = {
-            'programming': ['python', 'java', 'c++', 'javascript', 'react', 'node.js', 'angular'],
-            'vlsi': ['verilog', 'systemverilog', 'rtl', 'asic', 'fpga', 'synthesis', 'verification', 'uvm'],
-            'tools': ['synopsys', 'cadence', 'mentor', 'xilinx', 'altera', 'design compiler', 'icc2'],
-            'domains': ['physical design', 'digital design', 'analog design', 'mixed signal'],
-            'methodologies': ['agile', 'scrum', 'waterfall', 'devops', 'ci/cd']
+        # Stop words to ignore during matching
+        self.stop_words = {
+            'the', 'and', 'or', 'but', 'in', 'on', 'at', 'to', 'for', 'of', 'with', 'by', 'is', 'are', 'was', 'were',
+            'be', 'been', 'being', 'have', 'has', 'had', 'do', 'does', 'did', 'will', 'would', 'could', 'should',
+            'may', 'might', 'must', 'can', 'shall', 'a', 'an', 'this', 'that', 'these', 'those', 'i', 'you', 'he',
+            'she', 'it', 'we', 'they', 'me', 'him', 'her', 'us', 'them', 'my', 'your', 'his', 'her', 'its', 'our',
+            'their', 'experience', 'skills', 'knowledge', 'ability', 'candidate', 'required', 'must', 'should',
+            'preferred', 'plus', 'good', 'excellent', 'strong', 'solid', 'proven', 'demonstrated'
         }
         
-        # Domain differentiation - Critical for accurate matching
-        self.domain_conflicts = {
-            'vlsi_design_vs_physical': {
-                'design_keywords': ['rtl design', 'verilog', 'systemverilog', 'design compiler', 'uvm', 'verification', 'testbench'],
-                'physical_keywords': ['place and route', 'pnr', 'physical design', 'icc2', 'innovus', 'floorplan', 'timing closure', 'sta'],
-                'conflict_message': 'VLSI Design (Frontend RTL) vs Physical Design (Backend Implementation)'
-            },
-            'frontend_vs_backend': {
-                'design_keywords': ['react', 'angular', 'vue', 'html', 'css', 'javascript', 'ui/ux'],
-                'physical_keywords': ['node.js', 'python', 'java', 'database', 'api', 'server', 'backend'],
-                'conflict_message': 'Frontend Development vs Backend Development'
-            },
-            'software_vs_hardware': {
-                'design_keywords': ['software', 'application', 'web development', 'mobile app', 'programming'],
-                'physical_keywords': ['hardware', 'embedded', 'firmware', 'circuit design', 'pcb'],
-                'conflict_message': 'Software Development vs Hardware Engineering'
+        # Weight different types of keywords
+        self.keyword_weights = {
+            'technical_tools': 3.0,    # Tools like "Synopsys", "Verilog"
+            'technical_skills': 2.5,   # Skills like "RTL Design", "UVM"
+            'technologies': 2.0,       # Technologies like "ASIC", "FPGA" 
+            'general_skills': 1.0      # General terms
+        }
+    
+    def clean_and_tokenize(self, text: str) -> List[str]:
+        """Clean text and extract meaningful tokens"""
+        import string
+        
+        # Convert to lowercase and remove extra whitespace
+        text = re.sub(r'\s+', ' ', text.lower().strip())
+        
+        # Remove special characters but keep alphanumeric and spaces
+        text = re.sub(r'[^\w\s\+\-\.]', ' ', text)
+        
+        # Split into words
+        words = text.split()
+        
+        # Remove stop words and very short words
+        meaningful_words = [word for word in words if word not in self.stop_words and len(word) > 2]
+        
+        return meaningful_words
+    
+    def extract_phrases(self, text: str, max_phrase_length: int = 3) -> List[str]:
+        """Extract both individual words and meaningful phrases"""
+        words = self.clean_and_tokenize(text)
+        phrases = []
+        
+        # Add individual words
+        phrases.extend(words)
+        
+        # Add 2-word phrases
+        for i in range(len(words) - 1):
+            phrase = f"{words[i]} {words[i+1]}"
+            phrases.append(phrase)
+        
+        # Add 3-word phrases 
+        for i in range(len(words) - 2):
+            phrase = f"{words[i]} {words[i+1]} {words[i+2]}"
+            phrases.append(phrase)
+        
+        return phrases
+    
+    def extract_jd_requirements(self, jd_text: str) -> Dict[str, List[str]]:
+        """Extract requirements from JD with scoring weights"""
+        phrases = self.extract_phrases(jd_text)
+        
+        # Categorize keywords by type for different weights
+        technical_tools = []
+        technical_skills = []
+        technologies = []
+        general_skills = []
+        
+        # Technical tool patterns
+        tool_patterns = [
+            'synopsys', 'cadence', 'mentor', 'verilog', 'systemverilog', 'vcs', 'questasim', 'modelsim',
+            'design compiler', 'icc2', 'primetime', 'innovus', 'calibre', 'python', 'perl', 'tcl',
+            'matlab', 'xilinx', 'altera', 'vivado', 'quartus'
+        ]
+        
+        # Technical skill patterns
+        skill_patterns = [
+            'rtl design', 'verification', 'uvm', 'functional verification', 'design verification',
+            'testbench', 'coverage', 'assertion', 'debugging', 'simulation', 'synthesis',
+            'timing analysis', 'static timing', 'power analysis', 'dft', 'scan', 'bist'
+        ]
+        
+        # Technology patterns
+        tech_patterns = [
+            'asic', 'fpga', 'soc', 'ip', 'axi', 'ahb', 'apb', 'pcie', 'usb', 'ddr', 'serdes',
+            'risc', 'arm', 'cpu', 'gpu', 'memory', 'cache', 'pipeline'
+        ]
+        
+        for phrase in phrases:
+            phrase_lower = phrase.lower()
+            
+            # Check if it's a technical tool
+            if any(tool in phrase_lower for tool in tool_patterns):
+                technical_tools.append(phrase)
+            # Check if it's a technical skill
+            elif any(skill in phrase_lower for skill in skill_patterns):
+                technical_skills.append(phrase)
+            # Check if it's a technology
+            elif any(tech in phrase_lower for tech in tech_patterns):
+                technologies.append(phrase)
+            # Everything else is general
+            else:
+                general_skills.append(phrase)
+        
+        return {
+            'technical_tools': list(set(technical_tools)),
+            'technical_skills': list(set(technical_skills)),
+            'technologies': list(set(technologies)),
+            'general_skills': list(set(general_skills))
+        }
+    
+    def extract_resume_keywords(self, resume_text: str) -> List[str]:
+        """Extract all keywords/phrases from resume"""
+        return self.extract_phrases(resume_text)
+    
+    def calculate_string_match_score(self, resume_text: str, jd_text: str) -> Dict:
+        """Calculate match score based on string matching"""
+        
+        # Extract requirements from JD
+        jd_requirements = self.extract_jd_requirements(jd_text)
+        
+        # Extract keywords from resume
+        resume_keywords = self.extract_resume_keywords(resume_text)
+        resume_keywords_lower = [kw.lower() for kw in resume_keywords]
+        
+        # Calculate matches for each category
+        category_scores = {}
+        total_weighted_score = 0
+        total_possible_score = 0
+        detailed_matches = {}
+        
+        for category, requirements in jd_requirements.items():
+            if not requirements:  # Skip empty categories
+                continue
+                
+            weight = self.keyword_weights.get(category, 1.0)
+            matches = []
+            missing = []
+            
+            for req in requirements:
+                req_lower = req.lower()
+                # Check for exact match or partial match
+                if req_lower in resume_keywords_lower:
+                    matches.append(req)
+                elif any(req_lower in resume_kw for resume_kw in resume_keywords_lower):
+                    matches.append(req)
+                elif any(resume_kw in req_lower for resume_kw in resume_keywords_lower if len(resume_kw) > 3):
+                    matches.append(req)
+                else:
+                    missing.append(req)
+            
+            # Calculate category score
+            category_match_rate = len(matches) / len(requirements) if requirements else 0
+            category_score = category_match_rate * 100
+            weighted_score = category_score * weight
+            
+            category_scores[category] = {
+                'score': round(category_score, 1),
+                'weight': weight,
+                'weighted_score': round(weighted_score, 1),
+                'matches': matches,
+                'missing': missing,
+                'total_requirements': len(requirements)
             }
+            
+            total_weighted_score += weighted_score
+            total_possible_score += 100 * weight
+        
+        # Calculate overall score
+        overall_score = (total_weighted_score / total_possible_score * 100) if total_possible_score > 0 else 0
+        
+        # Extract experience
+        resume_exp = self.extract_experience(resume_text)
+        jd_exp = self.extract_experience(jd_text)
+        exp_score = min(resume_exp / jd_exp * 100, 100) if jd_exp > 0 else 100
+        
+        # Final combined score (80% skills, 20% experience)
+        final_score = (overall_score * 0.8) + (exp_score * 0.2)
+        
+        # Determine recommendation based on final score
+        if final_score >= 75:
+            recommendation = "SEND"
+            status = "✅"
+            reason = "Strong keyword match with requirements"
+        elif final_score >= 60:
+            recommendation = "MAYBE SEND" 
+            status = "⚠️"
+            reason = "Moderate match, review specific gaps"
+        elif final_score >= 45:
+            recommendation = "MAYBE SEND"
+            status = "⚠️" 
+            reason = "Some important keywords missing, but potential fit"
+        else:
+            recommendation = "DO NOT SEND"
+            status = "❌"
+            reason = "Insufficient keyword match with requirements"
+        
+        return {
+            'overall_score': round(final_score, 1),
+            'skill_score': round(overall_score, 1),
+            'experience_score': round(exp_score, 1),
+            'recommendation': recommendation,
+            'status': status,
+            'reason': reason,
+            'resume_experience': resume_exp,
+            'required_experience': jd_exp,
+            'category_breakdown': category_scores,
+            'total_jd_requirements': sum(len(reqs) for reqs in jd_requirements.values()),
+            'total_matches': sum(len(cat['matches']) for cat in category_scores.values())
         }
     
     def extract_text_from_pdf(self, file_path: str) -> str:
@@ -87,19 +269,69 @@ class ResumeJDMatcher:
             return "Unsupported file format"
     
     def extract_experience(self, text: str) -> int:
-        """Extract years of experience from text"""
+        """Extract years of experience from text with multiple patterns"""
         patterns = [
+            # Standard patterns
             r'(\d+)\+?\s*years?\s*(?:of\s*)?experience',
             r'experience\s*(?:of\s*)?(\d+)\+?\s*years?',
             r'(\d+)\+?\s*yrs?\s*(?:of\s*)?experience',
-            r'experience\s*(?:of\s*)?(\d+)\+?\s*yrs?'
+            r'experience\s*(?:of\s*)?(\d+)\+?\s*yrs?',
+            
+            # Additional patterns for better detection
+            r'(\d+)\+?\s*years?\s*in',
+            r'(\d+)\+?\s*years?\s*working',
+            r'(\d+)\+?\s*years?\s*as',
+            r'(\d+)\+?\s*yrs?\s*in',
+            r'(\d+)\+?\s*year\s*experience',
+            r'total\s*(?:of\s*)?(\d+)\+?\s*years?',
+            r'over\s*(\d+)\+?\s*years?',
+            r'more\s*than\s*(\d+)\+?\s*years?',
+            r'(\d+)\+?\s*years?\s*of\s*professional',
+            r'(\d+)\+?\s*years?\s*of\s*industry',
+            r'(\d+)\+?\s*years?\s*of\s*work',
+            r'professional\s*experience\s*(?:of\s*)?(\d+)\+?\s*years?',
+            
+            # Date range patterns (calculate years)
+            r'(\d{4})\s*-\s*(?:present|current|\d{4})',
+            r'(\d{4})\s*to\s*(?:present|current|\d{4})',
+            
+            # Work history patterns
+            r'working\s*since\s*(\d{4})',
+            r'started\s*in\s*(\d{4})',
         ]
         
-        for pattern in patterns:
-            matches = re.findall(pattern, text.lower())
+        experience_years = []
+        text_lower = text.lower()
+        
+        # Extract years from patterns
+        for pattern in patterns[:13]:  # First 13 are direct year patterns
+            matches = re.findall(pattern, text_lower)
             if matches:
-                return max([int(match) for match in matches])
-        return 0
+                for match in matches:
+                    try:
+                        years = int(match)
+                        if 0 <= years <= 50:  # Reasonable range
+                            experience_years.append(years)
+                    except:
+                        continue
+        
+        # Calculate from date ranges
+        current_year = 2025
+        date_patterns = patterns[13:]
+        for pattern in date_patterns:
+            matches = re.findall(pattern, text_lower)
+            for match in matches:
+                try:
+                    start_year = int(match)
+                    if 1990 <= start_year <= current_year:
+                        calculated_years = current_year - start_year
+                        if calculated_years <= 50:
+                            experience_years.append(calculated_years)
+                except:
+                    continue
+        
+        # Return the maximum experience found, or 0 if none
+        return max(experience_years) if experience_years else 0
     
     def extract_skills(self, text: str) -> Dict[str, List[str]]:
         """Extract technical skills from text"""
@@ -194,23 +426,34 @@ class ResumeJDMatcher:
             critical_issues.append(f"Missing critical skills: {', '.join(missing_critical[:5])}")
             overall_score = max(0, overall_score - 20)
         
-        # Enhanced recommendation logic
-        if domain_conflicts or len(critical_issues) > 0:
+        # Enhanced recommendation logic with more lenient scoring for good matches
+        if domain_conflicts:
             recommendation = "DO NOT SEND"
             status = "❌"
-            reason = "Critical domain mismatch or missing core skills"
-        elif overall_score >= 80:
+            reason = f"Critical domain mismatch: {domain_conflicts[0]['message']}"
+        elif len(critical_issues) > 2:  # More than 2 critical issues
+            recommendation = "DO NOT SEND"
+            status = "❌"
+            reason = "Multiple critical missing skills"
+        elif overall_score >= 70:  # Lowered from 80
             recommendation = "SEND"
             status = "✅"
             reason = "Strong match across skills and experience"
-        elif overall_score >= 65:
+        elif overall_score >= 50:  # Lowered from 65
             recommendation = "MAYBE SEND"
             status = "⚠️"
-            reason = "Moderate match, some gaps exist"
+            reason = "Moderate match, review specific requirements"
         else:
             recommendation = "DO NOT SEND"
             status = "❌"
             reason = "Insufficient match for role requirements"
+        
+        # Special case: If experience requirement is met and some core skills match, be more lenient
+        if resume_exp >= jd_exp and skill_score >= 40 and not domain_conflicts:
+            if recommendation == "DO NOT SEND":
+                recommendation = "MAYBE SEND"
+                status = "⚠️"
+                reason = "Experience requirement met, some skill gaps exist"
         
         return {
             'overall_score': round(overall_score, 1),
@@ -511,9 +754,49 @@ def analyze():
         if not resume_text or not jd_text:
             return jsonify({'error': 'Please provide both resume and job description'})
         
-        # Analyze match
-        results = matcher.calculate_match_score(resume_text, jd_text)
+        # Analyze match using string-based approach
+        results = matcher.calculate_string_match_score(resume_text, jd_text)
         return jsonify(results)
+        
+    except Exception as e:
+        return jsonify({'error': str(e)})
+
+@app.route('/debug', methods=['POST'])
+def debug_analysis():
+    """Debug endpoint to see detailed extraction"""
+    try:
+        data = request.get_json()
+        
+        if not data or 'text' not in data:
+            return jsonify({'error': 'Please provide text in JSON format'})
+        
+        text = data['text']
+        
+        # Extract and return all details
+        experience = matcher.extract_experience(text)
+        skills = matcher.extract_skills(text)
+        
+        # Show regex matches for experience
+        exp_matches = []
+        patterns = [
+            r'(\d+)\+?\s*years?\s*(?:of\s*)?experience',
+            r'experience\s*(?:of\s*)?(\d+)\+?\s*years?',
+            r'(\d+)\+?\s*yrs?\s*(?:of\s*)?experience',
+            r'(\d+)\+?\s*years?\s*in',
+            r'(\d+)\+?\s*years?\s*working'
+        ]
+        
+        for pattern in patterns:
+            matches = re.findall(pattern, text.lower())
+            if matches:
+                exp_matches.append({'pattern': pattern, 'matches': matches})
+        
+        return jsonify({
+            'extracted_experience': experience,
+            'extracted_skills': skills,
+            'experience_regex_matches': exp_matches,
+            'text_preview': text[:500] + '...' if len(text) > 500 else text
+        })
         
     except Exception as e:
         return jsonify({'error': str(e)})
@@ -527,7 +810,7 @@ def api_analyze():
         if not data or 'resume' not in data or 'jd' not in data:
             return jsonify({'error': 'Please provide both resume and jd in JSON format'})
         
-        results = matcher.calculate_match_score(data['resume'], data['jd'])
+        results = matcher.calculate_string_match_score(data['resume'], data['jd'])
         return jsonify(results)
         
     except Exception as e:
