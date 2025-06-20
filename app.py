@@ -377,13 +377,14 @@ HTML_TEMPLATE = """
         <div class="main-content">
             <div class="input-section">
                 <h3>📋 Job Description</h3>
-                <div class="file-upload" onclick="document.getElementById('jdFiles').click()" 
+                <div class="file-upload" onclick="triggerFileInput('jdFiles')" 
                      ondrop="handleFileDrop(event, 'jd')" ondragover="handleDragOver(event)" ondragleave="handleDragLeave(event)">
-                    <input type="file" id="jdFiles" accept=".txt,.pdf,.doc,.docx" multiple onchange="handleFileSelect(event, 'jd')">
                     <div>📁 <strong>Upload JD Files</strong></div>
                     <div class="upload-text">Drag & drop files here or click to browse</div>
                     <div class="upload-text">Supports: PDF, DOC, DOCX, TXT</div>
                 </div>
+                <input type="file" id="jdFiles" accept=".txt,.pdf,.doc,.docx" multiple 
+                       onchange="handleFileSelect(event, 'jd')" style="display: none;">
                 <div id="jdUploadedFiles" class="uploaded-files"></div>
                 
                 <div class="or-divider"><span>OR</span></div>
@@ -401,13 +402,14 @@ Example:
 
             <div class="input-section">
                 <h3>👥 Resumes</h3>
-                <div class="file-upload" onclick="document.getElementById('resumeFiles').click()" 
+                <div class="file-upload" onclick="triggerFileInput('resumeFiles')" 
                      ondrop="handleFileDrop(event, 'resume')" ondragover="handleDragOver(event)" ondragleave="handleDragLeave(event)">
-                    <input type="file" id="resumeFiles" accept=".txt,.pdf,.doc,.docx" multiple onchange="handleFileSelect(event, 'resume')">
                     <div>👤 <strong>Upload Resume Files</strong></div>
                     <div class="upload-text">Drag & drop multiple resumes here or click to browse</div>
                     <div class="upload-text">Supports: PDF, DOC, DOCX, TXT</div>
                 </div>
+                <input type="file" id="resumeFiles" accept=".txt,.pdf,.doc,.docx" multiple 
+                       onchange="handleFileSelect(event, 'resume')" style="display: none;">
                 <div id="resumeUploadedFiles" class="uploaded-files"></div>
                 
                 <div class="or-divider"><span>OR</span></div>
@@ -453,27 +455,47 @@ Embedded Systems Engineer
         let uploadedJDFiles = [];
         let uploadedResumeFiles = [];
 
+        // Function to trigger file input
+        function triggerFileInput(inputId) {
+            console.log('Triggering file input:', inputId);
+            const fileInput = document.getElementById(inputId);
+            if (fileInput) {
+                fileInput.click();
+            } else {
+                console.error('File input not found:', inputId);
+            }
+        }
+
         // File drag and drop handlers
         function handleDragOver(event) {
             event.preventDefault();
+            event.stopPropagation();
             event.currentTarget.classList.add('dragover');
         }
 
         function handleDragLeave(event) {
+            event.preventDefault();
+            event.stopPropagation();
             event.currentTarget.classList.remove('dragover');
         }
 
         function handleFileDrop(event, type) {
             event.preventDefault();
+            event.stopPropagation();
             event.currentTarget.classList.remove('dragover');
             
             const files = Array.from(event.dataTransfer.files);
+            console.log('Files dropped:', files.length, 'for type:', type);
             handleFiles(files, type);
         }
 
         function handleFileSelect(event, type) {
             const files = Array.from(event.target.files);
+            console.log('Files selected:', files.length, 'for type:', type);
             handleFiles(files, type);
+            
+            // Reset the input so the same file can be selected again
+            event.target.value = '';
         }
 
         function handleFiles(files, type) {
