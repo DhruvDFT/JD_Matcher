@@ -766,37 +766,73 @@ def analyze():
         resume_text = ""
         jd_text = ""
         
-        # Handle resume input
+        # Handle resume input with validation
         if 'resume' in request.files and request.files['resume'].filename:
             resume_file = request.files['resume']
+            if resume_file.filename.strip() == '':
+                return jsonify({'error': 'Resume file is empty'})
             filename = secure_filename(resume_file.filename)
             resume_path = os.path.join(app.config['UPLOAD_FOLDER'], filename)
             resume_file.save(resume_path)
             resume_text = matcher.extract_text(resume_path)
             os.remove(resume_path)  # Clean up
+            if not resume_text or resume_text.startswith('Error'):
+                return jsonify({'error': f'Could not extract text from resume file: {resume_text}'})
         elif request.form.get('resumeText'):
-            resume_text = request.form.get('resumeText')
+            resume_text = request.form.get('resumeText').strip()
         
-        # Handle JD input
+        # Handle JD input with validation
         if 'jd' in request.files and request.files['jd'].filename:
             jd_file = request.files['jd']
+            if jd_file.filename.strip() == '':
+                return jsonify({'error': 'Job description file is empty'})
             filename = secure_filename(jd_file.filename)
             jd_path = os.path.join(app.config['UPLOAD_FOLDER'], filename)
             jd_file.save(jd_path)
             jd_text = matcher.extract_text(jd_path)
             os.remove(jd_path)  # Clean up
+            if not jd_text or jd_text.startswith('Error'):
+                return jsonify({'error': f'Could not extract text from JD file: {jd_text}'})
         elif request.form.get('jdText'):
-            jd_text = request.form.get('jdText')
+            jd_text = request.form.get('jdText').strip()
         
-        if not resume_text or not jd_text:
-            return jsonify({'error': 'Please provide both resume and job description'})
+        # Final validation
+        if not resume_text or len(resume_text.strip()) < 10:
+            return jsonify({'error': 'Please provide a valid resume (at least 10 characters)'})
+        
+        if not jd_text or len(jd_text.strip()) < 10:
+            return jsonify({'error': 'Please provide a valid job description (at least 10 characters)'})
         
         # Analyze match using string-based approach
         results = matcher.calculate_string_match_score(resume_text, jd_text)
+        
+        # Validate results before sending
+        if not isinstance(results, dict):
+            return jsonify({'error': 'Analysis failed - invalid results format'})
+        
+        # Ensure all required fields exist
+        required_fields = ['overall_score', 'skill_score', 'experience_score', 'recommendation', 'status', 'reason']
+        for field in required_fields:
+            if field not in results:
+                results[field] = 0 if 'score' in field else 'ERROR'
+        
         return jsonify(results)
         
     except Exception as e:
-        return jsonify({'error': str(e)})
+        # Log the error for debugging
+        print(f"Error in analyze endpoint: {str(e)}")
+        import traceback
+        traceback.print_exc()
+        
+        return jsonify({
+            'error': f'Server error during analysis: {str(e)}',
+            'overall_score': 0,
+            'skill_score': 0,
+            'experience_score': 0,
+            'recommendation': 'ERROR',
+            'status': '❌',
+            'reason': 'Analysis failed due to server error'
+        })
 
 @app.route('/debug', methods=['POST'])
 def debug_analysis():
