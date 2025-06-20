@@ -670,6 +670,10 @@ Embedded Systems Engineer
             const errorDiv = document.getElementById('error');
             errorDiv.textContent = message;
             errorDiv.style.display = 'block';
+            // Auto-hide error after 10 seconds
+            setTimeout(() => {
+                errorDiv.style.display = 'none';
+            }, 10000);
         }
 
         function displayResults(results, stats) {
@@ -765,6 +769,26 @@ Embedded Systems Engineer
             if (score >= 60) return 'Moderate technical match. May be suitable for junior roles or with additional training in specific tools/methodologies.';
             return 'Limited match with job requirements. Consider only if expanding search criteria or for entry-level positions.';
         }
+
+        // Test function to verify buttons work
+        function testButtonClick() {
+            console.log('Button clicked successfully!');
+            alert('Button is working!');
+        }
+
+        // Initialize page when DOM is loaded
+        document.addEventListener('DOMContentLoaded', function() {
+            console.log('Page loaded, JavaScript initialized');
+            
+            // Test that elements exist
+            const analyzeBtn = document.getElementById('analyzeBtn');
+            const jdFiles = document.getElementById('jdFiles');
+            const resumeFiles = document.getElementById('resumeFiles');
+            
+            console.log('Analyze button:', analyzeBtn ? 'Found' : 'Not found');
+            console.log('JD files input:', jdFiles ? 'Found' : 'Not found');
+            console.log('Resume files input:', resumeFiles ? 'Found' : 'Not found');
+        });
     </script>
 </body>
 </html>
