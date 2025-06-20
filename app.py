@@ -262,27 +262,122 @@ class ResumeJDMatcher:
             }
     
     def extract_text_from_pdf(self, file_path: str) -> str:
-        """Extract text from PDF file"""
+        """Extract text from PDF file with multiple fallback methods"""
         try:
+            # Primary method with PyPDF2
             with open(file_path, 'rb') as file:
                 reader = PyPDF2.PdfReader(file)
                 text = ""
                 for page in reader.pages:
-                    text += page.extract_text()
-                return text
-        except Exception as e:
-            return f"Error reading PDF: {str(e)}"
+                    try:
+                        page_text = page.extract_text()
+                        if page_text:
+                            text += page_text + "\n"
+                    except Exception as page_error:
+                        print(f"Error reading page: {page_error}")
+                        continue
+                
+                if text.strip():
+                    return text
+                else:
+                    return "No text found in PDF - might be image-based or encrypted"
+                    
+        except Exception as e1:
+            print(f"PyPDF2 extraction failed: {e1}")
+            
+            # Fallback: Try alternative PDF reading method
+            try:
+                # Simple byte-level text extraction for basic PDFs
+                with open(file_path, 'rb') as file:
+                    content = file.read()
+                    # Look for text streams in PDF
+                    import re
+                    text_pattern = re.compile(rb'BT\s*/F\d+\s+\d+\s+Tf\s+(.*?)ET', re.DOTALL)
+                    matches = text_pattern.findall(content)
+                    
+                    extracted_text = ""
+                    for match in matches:
+                        try:
+                            # Try to decode the text
+                            text_str = match.decode('utf-8', errors='ignore')
+                            extracted_text += text_str + " "
+                        except:
+                            continue
+                    
+                    if extracted_text.strip():
+                        return extracted_text
+                    else:
+                        return f"PDF appears to be image-based or encrypted. Try converting to text format. Error: {str(e1)}"
+                        
+            except Exception as e2:
+                return f"Could not read PDF file. Try converting to TXT format. Error: {str(e1)}"
     
     def extract_text_from_docx(self, file_path: str) -> str:
-        """Extract text from DOCX file"""
+        """Extract text from DOCX file with robust error handling"""
         try:
+            # Try primary method with python-docx
             doc = docx.Document(file_path)
             text = ""
             for paragraph in doc.paragraphs:
                 text += paragraph.text + "\n"
-            return text
-        except Exception as e:
-            return f"Error reading DOCX: {str(e)}"
+            
+            # Also try to extract from tables
+            for table in doc.tables:
+                for row in table.rows:
+                    for cell in row.cells:
+                        text += cell.text + " "
+                text += "\n"
+            
+            if text.strip():
+                return text
+            else:
+                return "No text content found in DOCX file"
+                
+        except Exception as e1:
+            print(f"Primary DOCX extraction failed: {e1}")
+            
+            # Fallback method: Try to extract as ZIP and read XML directly
+            try:
+                import zipfile
+                import xml.etree.ElementTree as ET
+                
+                text_content = ""
+                with zipfile.ZipFile(file_path, 'r') as zip_file:
+                    # Try to read document.xml directly
+                    try:
+                        with zip_file.open('word/document.xml') as doc_xml:
+                            tree = ET.parse(doc_xml)
+                            root = tree.getroot()
+                            
+                            # Extract text from all text nodes
+                            for elem in root.iter():
+                                if elem.text:
+                                    text_content += elem.text + " "
+                                    
+                    except Exception as e2:
+                        print(f"XML extraction failed: {e2}")
+                        
+                    # If that fails, try to get any readable text files
+                    if not text_content.strip():
+                        for file_name in zip_file.namelist():
+                            if file_name.endswith('.xml') and 'word/' in file_name:
+                                try:
+                                    with zip_file.open(file_name) as xml_file:
+                                        content = xml_file.read().decode('utf-8', errors='ignore')
+                                        # Simple text extraction from XML
+                                        import re
+                                        text_matches = re.findall(r'<w:t[^>]*>([^<]+)</w:t>', content)
+                                        text_content += ' '.join(text_matches)
+                                except:
+                                    continue
+                
+                if text_content.strip():
+                    return text_content
+                else:
+                    return f"DOCX file appears corrupted or encrypted. Error: {str(e1)}"
+                    
+            except Exception as e2:
+                return f"Could not extract text from DOCX file. Try converting to PDF or TXT format. Error: {str(e1)}"
     
     def extract_text_from_txt(self, file_path: str) -> str:
         """Extract text from TXT file"""
@@ -766,7 +861,7 @@ def analyze():
         resume_text = ""
         jd_text = ""
         
-        # Handle resume input with validation
+        # Handle resume input with enhanced validation
         if 'resume' in request.files and request.files['resume'].filename:
             resume_file = request.files['resume']
             if resume_file.filename.strip() == '':
@@ -776,12 +871,25 @@ def analyze():
             resume_file.save(resume_path)
             resume_text = matcher.extract_text(resume_path)
             os.remove(resume_path)  # Clean up
-            if not resume_text or resume_text.startswith('Error'):
-                return jsonify({'error': f'Could not extract text from resume file: {resume_text}'})
+            
+            # Check if extraction failed or returned an error message
+            if not resume_text or resume_text.startswith('Error') or resume_text.startswith('Could not'):
+                return jsonify({
+                    'error': f'File processing issue: {resume_text}',
+                    'suggestion': 'Try uploading the file in a different format (PDF → TXT, or DOCX → PDF), or copy-paste the text directly into the text area.'
+                })
+            
+            # Check if extracted text is meaningful
+            if len(resume_text.strip()) < 50:
+                return jsonify({
+                    'error': 'Very little text extracted from file. The file might be corrupted, image-based, or empty.',
+                    'suggestion': 'Try copy-pasting the resume text directly into the text area below the file upload.'
+                })
+                
         elif request.form.get('resumeText'):
             resume_text = request.form.get('resumeText').strip()
         
-        # Handle JD input with validation
+        # Handle JD input with enhanced validation
         if 'jd' in request.files and request.files['jd'].filename:
             jd_file = request.files['jd']
             if jd_file.filename.strip() == '':
@@ -791,8 +899,19 @@ def analyze():
             jd_file.save(jd_path)
             jd_text = matcher.extract_text(jd_path)
             os.remove(jd_path)  # Clean up
-            if not jd_text or jd_text.startswith('Error'):
-                return jsonify({'error': f'Could not extract text from JD file: {jd_text}'})
+            
+            if not jd_text or jd_text.startswith('Error') or jd_text.startswith('Could not'):
+                return jsonify({
+                    'error': f'JD file processing issue: {jd_text}',
+                    'suggestion': 'Try uploading the JD in a different format or copy-paste the text directly.'
+                })
+                
+            if len(jd_text.strip()) < 20:
+                return jsonify({
+                    'error': 'Very little text extracted from JD file.',
+                    'suggestion': 'Try copy-pasting the job description text directly.'
+                })
+                
         elif request.form.get('jdText'):
             jd_text = request.form.get('jdText').strip()
         
