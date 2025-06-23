@@ -50,7 +50,7 @@ class DomainMatcher:
             }
         }
         
-        # ADD: Skills and tools detection (NEW ADDITION)
+        # Skills and tools detection
         self.skill_categories = {
             'tools': [
                 'synopsys', 'cadence', 'mentor', 'design compiler', 'icc2', 'primetime', 'innovus',
@@ -112,7 +112,6 @@ class DomainMatcher:
         else:
             return "Unsupported file format"
     
-    # ADD: Experience extraction method
     def extract_experience(self, text: str) -> int:
         """Extract years of experience from text"""
         patterns = [
@@ -164,7 +163,6 @@ class DomainMatcher:
         
         return max(experience_years) if experience_years else 0
     
-    # ADD: Skills matching method
     def extract_skills(self, text: str) -> Dict:
         """Extract skills from text"""
         text_lower = text.lower()
@@ -181,7 +179,6 @@ class DomainMatcher:
         
         return found_skills
     
-    # KEEP EXISTING: Domain detection (UNCHANGED)
     def detect_domain(self, text: str) -> Dict:
         """Detect the primary domain of a text"""
         text_lower = text.lower()
@@ -225,22 +222,21 @@ class DomainMatcher:
             'matched_keywords': matched_keywords
         }
     
-    # ENHANCED: Complete comparison method
     def compare_domains(self, resume_text: str, jd_text: str) -> Dict:
-        """Compare domains between resume and JD + skills and experience"""
+        """Compare domains between resume and JD + enhanced analysis"""
         
         # STEP 1: Domain matching (KEEP EXISTING LOGIC)
         resume_domain = self.detect_domain(resume_text)
         jd_domain = self.detect_domain(jd_text)
         domains_match = resume_domain['primary_domain'] == jd_domain['primary_domain']
         
-        # STEP 2: Experience comparison (NEW)
+        # STEP 2: Experience comparison
         resume_exp = self.extract_experience(resume_text)
         jd_exp = self.extract_experience(jd_text)
         exp_match = resume_exp >= jd_exp if jd_exp > 0 else True
         exp_score = min(resume_exp / jd_exp * 100, 100) if jd_exp > 0 else 100
         
-        # STEP 3: Skills comparison (NEW)
+        # STEP 3: Skills comparison
         resume_skills = self.extract_skills(resume_text)
         jd_skills = self.extract_skills(jd_text)
         
@@ -253,7 +249,7 @@ class DomainMatcher:
             jd_category_skills = set(jd_skills[category])
             resume_category_skills = set(resume_skills[category])
             
-            if jd_category_skills:  # Only count if JD has requirements in this category
+            if jd_category_skills:
                 matches = jd_category_skills.intersection(resume_category_skills)
                 score = (len(matches) / len(jd_category_skills)) * 100
                 skill_scores[category] = {
@@ -267,7 +263,7 @@ class DomainMatcher:
         
         overall_skill_score = overall_skill_score / total_categories if total_categories > 0 else 0
         
-        # STEP 4: Final recommendation (ENHANCED LOGIC)
+        # STEP 4: Final recommendation
         if resume_domain['primary_domain'] == 'unknown' or jd_domain['primary_domain'] == 'unknown':
             recommendation = "MANUAL REVIEW"
             status = "⚠️"
@@ -299,6 +295,27 @@ class DomainMatcher:
                 status = "❌"
                 reason = f"Domain match but significant skill/experience gaps ({final_score:.1f}% match)"
         
+        # Build complete analysis text for simple display
+        analysis_text = f"""
+Experience Analysis:
+- Resume Experience: {resume_exp} years
+- Required Experience: {jd_exp} years  
+- Experience Match: {'✅ Meets requirement' if exp_match else '❌ Below requirement'}
+- Experience Score: {round(exp_score, 1)}%
+
+Skills Analysis:
+- Overall Skills Score: {round(overall_skill_score, 1)}%
+"""
+        
+        if skill_scores:
+            analysis_text += "\nSkills Breakdown:\n"
+            for category, data in skill_scores.items():
+                analysis_text += f"- {category.title()}: {data['score']}% ({len(data['matched'])}/{data['total_required']})\n"
+                if data['matched']:
+                    analysis_text += f"  ✅ Matched: {', '.join(data['matched'][:5])}\n"
+                if data['missing']:
+                    analysis_text += f"  ❌ Missing: {', '.join(data['missing'][:5])}\n"
+        
         return {
             'recommendation': recommendation,
             'status': status,
@@ -307,19 +324,7 @@ class DomainMatcher:
             'domains_match': domains_match,
             'resume_domain': resume_domain,
             'jd_domain': jd_domain,
-            # NEW: Additional analysis
-            'experience_analysis': {
-                'resume_years': resume_exp,
-                'required_years': jd_exp,
-                'experience_match': exp_match,
-                'experience_score': round(exp_score, 1)
-            },
-            'skills_analysis': {
-                'overall_skill_score': round(overall_skill_score, 1),
-                'category_scores': skill_scores,
-                'resume_skills': resume_skills,
-                'jd_skills': jd_skills
-            }
+            'analysis_text': analysis_text
         }
 
 # Initialize matcher
@@ -333,7 +338,7 @@ def index():
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Domain Matcher - Phase 1</title>
+    <title>Domain Matcher + Skills</title>
     <style>
         body {
             font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
@@ -466,20 +471,30 @@ def index():
             0% { transform: rotate(0deg); }
             100% { transform: rotate(360deg); }
         }
+        .analysis-text {
+            background: #f8f9fa;
+            padding: 15px;
+            border-radius: 8px;
+            margin: 15px 0;
+            white-space: pre-line;
+            font-family: monospace;
+            font-size: 14px;
+        }
+        .score-display {
+            text-align: center;
+            margin: 15px 0;
+            font-size: 24px;
+            font-weight: bold;
+            color: #2c3e50;
+        }
     </style>
 </head>
 <body>
     <div class="container">
-        <h1>🎯 Domain Matcher - Phase 1</h1>
+        <h1>🎯 Complete Domain + Skills Matcher</h1>
         
         <div class="phase-info">
-            <strong>📋 Phase 1: Domain Detection Only</strong><br>
-            This version focuses purely on identifying whether the resume and job description are in the same domain:
-            <ul style="margin: 10px 0; padding-left: 20px;">
-                <li><strong>Design Verification (DV):</strong> UVM, testbench, verification, coverage, assertions</li>
-                <li><strong>Physical Design (PD):</strong> Place & route, floorplan, timing closure, ICC2, STA</li>
-                <li><strong>RTL Design:</strong> Verilog, synthesis, architecture, logic design</li>
-            </ul>
+            <strong>📋 Complete Analysis:</strong> Domain detection + Skills analysis + Experience matching
         </div>
         
         <form id="matchForm">
@@ -499,22 +514,21 @@ def index():
                 </div>
             </div>
             
-            <button type="submit">🔍 Check Domain Match</button>
+            <button type="submit">🔍 Analyze Complete Match</button>
         </form>
         
         <div class="loading" id="loading">
             <div class="spinner"></div>
-            <p>Analyzing domains...</p>
+            <p>Analyzing match...</p>
         </div>
         
         <div class="results" id="results">
             <h2 id="recommendation"></h2>
             <p id="reason"></p>
             
-            <!-- ADD: Overall score display -->
-            <div id="overallScore" style="text-align: center; margin: 15px 0; display: none;">
-                <div style="font-size: 24px; font-weight: bold; color: #2c3e50;" id="scoreValue"></div>
-                <div style="color: #666;">Overall Match Score</div>
+            <div class="score-display" id="overallScore" style="display: none;">
+                <div id="scoreValue"></div>
+                <div style="font-size: 14px; font-weight: normal;">Overall Match Score</div>
             </div>
             
             <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 20px; margin-top: 20px;">
@@ -528,24 +542,44 @@ def index():
                 </div>
             </div>
             
-            <!-- ADD: Additional analysis sections -->
-            <div id="additionalAnalysis" style="display: none; margin-top: 20px;">
-                <!-- Experience Analysis -->
-                <div class="domain-card">
-                    <h4>⏱️ Experience Analysis</h4>
-                    <div id="experienceAnalysis"></div>
-                </div>
-                
-                <!-- Skills Analysis -->
-                <div class="domain-card">
-                    <h4>🛠️ Skills Analysis</h4>
-                    <div id="skillsAnalysis"></div>
-                </div>
+            <div class="domain-card">
+                <h4>📊 Complete Analysis</h4>
+                <div class="analysis-text" id="analysisText"></div>
             </div>
         </div>
     </div>
 
     <script>
+        function updateDomainCard(elementId, domainData) {
+            const element = document.getElementById(elementId);
+            const confidence = domainData.confidence || 0;
+            
+            let html = `
+                <div><strong>Detected Domain:</strong> ${domainData.domain_name}</div>
+                <div><strong>Confidence:</strong> ${confidence}% (${domainData.score}/${domainData.total_keywords} keywords)</div>
+                <div class="confidence-bar">
+                    <div class="confidence-fill" style="width: ${confidence}%"></div>
+                </div>
+            `;
+            
+            if (domainData.matched_keywords && domainData.matched_keywords[domainData.primary_domain]) {
+                const keywords = domainData.matched_keywords[domainData.primary_domain];
+                if (keywords.length > 0) {
+                    html += '<div><strong>Matched Keywords:</strong></div>';
+                    html += '<div class="keywords">';
+                    keywords.slice(0, 10).forEach(keyword => {
+                        html += `<span class="keyword">${keyword}</span>`;
+                    });
+                    if (keywords.length > 10) {
+                        html += `<span class="keyword">+${keywords.length - 10} more</span>`;
+                    }
+                    html += '</div>';
+                }
+            }
+            
+            element.innerHTML = html;
+        }
+
         document.getElementById('matchForm').addEventListener('submit', async function(e) {
             e.preventDefault();
             
@@ -588,71 +622,32 @@ def index():
                 
                 // Set result styling
                 results.className = 'results';
-                if (data.domains_match && data.final_score >= 60) {
+                if (data.domains_match && (data.final_score || 0) >= 60) {
                     results.classList.add('match');
-                } else if (data.recommendation.includes('MANUAL') || data.recommendation.includes('MAYBE')) {
+                } else if (data.recommendation && (data.recommendation.includes('MANUAL') || data.recommendation.includes('MAYBE'))) {
                     results.classList.add('review');
                 } else {
                     results.classList.add('mismatch');
                 }
                 
-                // Update domain cards (KEEP EXISTING)
+                // Update domain cards
                 updateDomainCard('resumeDomain', data.resume_domain);
                 updateDomainCard('jdDomain', data.jd_domain);
                 
-                // Show additional analysis if available
-                if (data.experience_analysis || data.skills_analysis) {
-                    document.getElementById('additionalAnalysis').style.display = 'block';
-                    
-                    if (data.experience_analysis) {
-                        updateExperienceAnalysis(data.experience_analysis);
-                    }
-                    
-                    if (data.skills_analysis) {
-                        updateSkillsAnalysis(data.skills_analysis);
-                    }
-                } else {
-                    document.getElementById('additionalAnalysis').style.display = 'none';
+                // Show analysis text
+                if (data.analysis_text) {
+                    document.getElementById('analysisText').textContent = data.analysis_text;
                 }
                 
                 results.style.display = 'block';
                 
             } catch (error) {
+                console.error('Error details:', error);
                 alert('Analysis failed: ' + error.message);
             } finally {
                 loading.style.display = 'none';
             }
         });
-        
-        function updateDomainCard(elementId, domainData) {
-            const element = document.getElementById(elementId);
-            const confidence = domainData.confidence || 0;
-            
-            let html = `
-                <div><strong>Detected Domain:</strong> ${domainData.domain_name}</div>
-                <div><strong>Confidence:</strong> ${confidence}% (${domainData.score}/${domainData.total_keywords} keywords)</div>
-                <div class="confidence-bar">
-                    <div class="confidence-fill" style="width: ${confidence}%"></div>
-                </div>
-            `;
-            
-            if (domainData.matched_keywords && domainData.matched_keywords[domainData.primary_domain]) {
-                const keywords = domainData.matched_keywords[domainData.primary_domain];
-                if (keywords.length > 0) {
-                    html += '<div><strong>Matched Keywords:</strong></div>';
-                    html += '<div class="keywords">';
-                    keywords.slice(0, 10).forEach(keyword => {
-                        html += `<span class="keyword">${keyword}</span>`;
-                    });
-                    if (keywords.length > 10) {
-                        html += `<span class="keyword">+${keywords.length - 10} more</span>`;
-                    }
-                    html += '</div>';
-                }
-            }
-            
-            element.innerHTML = html;
-        }
     </script>
 </body>
 </html>
