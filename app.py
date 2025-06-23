@@ -113,55 +113,125 @@ class DomainMatcher:
             return "Unsupported file format"
     
     def extract_experience(self, text: str) -> int:
-        """Extract years of experience from text"""
-        patterns = [
-            r'(\d+)\+?\s*years?\s*(?:of\s*)?experience',
-            r'experience\s*(?:of\s*)?(\d+)\+?\s*years?',
-            r'(\d+)\+?\s*yrs?\s*(?:of\s*)?experience',
-            r'(\d+)\+?\s*years?\s*(?:in|working|as)',
-            r'total\s*(?:of\s*)?(\d+)\+?\s*years?',
-            r'over\s*(\d+)\+?\s*years?',
-            r'more\s*than\s*(\d+)\+?\s*years?',
-            r'having\s*(\d+)\+?\s*years?',
-            r'with\s*(\d+)\+?\s*years?\s*(?:of\s*)?experience'
-        ]
-        
+        """Extract years of experience from text with enhanced patterns"""
         experience_years = []
         text_lower = text.lower()
         
-        for pattern in patterns:
+        # Debug: Print text snippet to see what we're working with
+        print(f"DEBUG: Text preview for experience extraction: {text_lower[:500]}...")
+        
+        # Enhanced patterns - more comprehensive
+        patterns = [
+            # Direct experience mentions
+            r'(\d+)\+?\s*years?\s*(?:of\s*)?experience',
+            r'experience\s*(?:of\s*)?(\d+)\+?\s*years?',
+            r'(\d+)\+?\s*yrs?\s*(?:of\s*)?experience',
+            r'(\d+)\+?\s*years?\s*(?:of\s*)?(?:work\s*)?experience',
+            
+            # Working/employment patterns
+            r'(\d+)\+?\s*years?\s*(?:in|working|as|with)',
+            r'working\s*(?:for\s*)?(\d+)\+?\s*years?',
+            r'(\d+)\+?\s*years?\s*working',
+            r'(\d+)\+?\s*years?\s*in\s+(?:the\s+)?(?:field|industry|domain)',
+            
+            # Career/professional patterns
+            r'(\d+)\+?\s*years?\s*(?:of\s*)?(?:professional|career|industry)',
+            r'professional\s*(?:experience\s*(?:of\s*)?)?(\d+)\+?\s*years?',
+            r'career\s*(?:spanning\s*)?(\d+)\+?\s*years?',
+            r'total\s*(?:of\s*)?(\d+)\+?\s*years?',
+            
+            # Comparative patterns
+            r'over\s*(\d+)\+?\s*years?',
+            r'more\s*than\s*(\d+)\+?\s*years?',
+            r'above\s*(\d+)\+?\s*years?',
+            r'around\s*(\d+)\+?\s*years?',
+            r'approximately\s*(\d+)\+?\s*years?',
+            r'nearly\s*(\d+)\+?\s*years?',
+            
+            # Having/with patterns
+            r'having\s*(\d+)\+?\s*years?',
+            r'with\s*(\d+)\+?\s*years?\s*(?:of\s*)?(?:experience|expertise)',
+            r'possess\s*(\d+)\+?\s*years?',
+            r'bring\s*(\d+)\+?\s*years?',
+            
+            # Years mentioned with job titles
+            r'(\d+)\+?\s*years?\s*(?:as\s*)?(?:a\s*)?(?:senior\s*)?(?:lead\s*)?(?:principal\s*)?(?:engineer|developer|designer|architect)',
+            
+            # Format: "5+ years of..."
+            r'(\d+)\+\s*years?\s*of',
+            
+            # Education to work calculation - graduation patterns
+            r'graduated?\s*(?:in\s*)?(\d{4})',
+            r'(?:b\.?tech|be|bachelor|m\.?tech|me|master|mba).*?(?:in\s*)?(\d{4})',
+            r'(?:b\.?tech|be|bachelor|m\.?tech|me|master|mba).*?(\d{4})',
+            r'degree.*?(\d{4})',
+            r'university.*?(\d{4})',
+            r'college.*?(\d{4})',
+        ]
+        
+        # Extract from direct experience patterns (excluding graduation patterns)
+        direct_patterns = patterns[:-7]  # All except graduation patterns
+        for i, pattern in enumerate(direct_patterns):
             matches = re.findall(pattern, text_lower)
             if matches:
+                print(f"DEBUG: Pattern {i+1} matched: {matches}")
                 for match in matches:
                     try:
                         years = int(match)
-                        if 0 <= years <= 50:
+                        if 0 <= years <= 50:  # Reasonable range
                             experience_years.append(years)
+                            print(f"DEBUG: Added {years} years from direct pattern")
                     except:
                         continue
         
-        # Also check employment date ranges
+        # Calculate from graduation year (assume they started working after graduation)
         current_year = 2025
+        graduation_patterns = patterns[-7:]  # Last 7 patterns
+        for i, pattern in enumerate(graduation_patterns):
+            matches = re.findall(pattern, text_lower)
+            if matches:
+                print(f"DEBUG: Graduation pattern {i+1} matched: {matches}")
+                for match in matches:
+                    try:
+                        grad_year = int(match)
+                        if 1990 <= grad_year <= current_year - 1:  # Must have graduated at least 1 year ago
+                            calculated_years = current_year - grad_year
+                            if calculated_years <= 35:  # Reasonable working years
+                                experience_years.append(calculated_years)
+                                print(f"DEBUG: Added {calculated_years} years from graduation year {grad_year}")
+                    except:
+                        continue
+        
+        # Employment date ranges - present job
         date_patterns = [
-            r'(\d{4})\s*-\s*(?:present|current|till\s*date)',
-            r'(\d{4})\s*to\s*(?:present|current)',
-            r'since\s*(\d{4})',
-            r'from\s*(\d{4})\s*to\s*(?:present|current)'
+            r'(\d{4})\s*-\s*(?:present|current|till\s*date|now)',
+            r'(\d{4})\s*to\s*(?:present|current|till\s*date|now)',
+            r'(?:since|from)\s*(\d{4})',
+            r'from\s*(\d{4})\s*to\s*(?:present|current|now)',
+            r'started\s*(?:in\s*)?(\d{4})',
+            r'joining\s*(?:in\s*)?(\d{4})',
+            r'employed\s*(?:since\s*)?(\d{4})',
         ]
         
-        for pattern in date_patterns:
+        for i, pattern in enumerate(date_patterns):
             matches = re.findall(pattern, text_lower)
-            for match in matches:
-                try:
-                    start_year = int(match)
-                    if 1990 <= start_year <= current_year:
-                        calculated_years = current_year - start_year
-                        if calculated_years <= 40:
-                            experience_years.append(calculated_years)
-                except:
-                    continue
+            if matches:
+                print(f"DEBUG: Date pattern {i+1} matched: {matches}")
+                for match in matches:
+                    try:
+                        start_year = int(match)
+                        if 1990 <= start_year <= current_year:
+                            calculated_years = current_year - start_year
+                            if calculated_years <= 40:
+                                experience_years.append(calculated_years)
+                                print(f"DEBUG: Added {calculated_years} years from employment start year {start_year}")
+                    except:
+                        continue
         
-        return max(experience_years) if experience_years else 0
+        # Return the maximum experience found
+        result = max(experience_years) if experience_years else 0
+        print(f"DEBUG: Final experience result: {result} years (from candidates: {experience_years})")
+        return result
     
     def extract_skills(self, text: str) -> Dict:
         """Extract skills from text"""
@@ -515,6 +585,7 @@ def index():
             </div>
             
             <button type="submit">🔍 Analyze Complete Match</button>
+            <button type="button" onclick="testExperience()" style="background-color: #f39c12; margin-left: 10px;">🔧 Test Experience Extraction</button>
         </form>
         
         <div class="loading" id="loading">
@@ -578,6 +649,42 @@ def index():
             }
             
             element.innerHTML = html;
+        }
+
+        function testExperience() {
+            const resumeText = document.getElementById('resumeText').value;
+            const jdText = document.getElementById('jdText').value;
+            
+            if (!resumeText) {
+                alert('Please enter resume text first');
+                return;
+            }
+            
+            const formData = new FormData();
+            formData.append('resumeText', resumeText);
+            formData.append('jdText', jdText);
+            
+            fetch('/debug-experience', {
+                method: 'POST',
+                body: formData
+            })
+            .then(response => response.json())
+            .then(data => {
+                if (data.error) {
+                    alert('Error: ' + data.error);
+                } else {
+                    alert(`Experience Extraction Test:
+Resume Experience: ${data.resume_experience} years
+JD Experience: ${data.jd_experience} years
+
+Text Preview: ${data.text_preview}...
+
+${data.debug_info}`);
+                }
+            })
+            .catch(error => {
+                alert('Test failed: ' + error.message);
+            });
         }
 
         document.getElementById('matchForm').addEventListener('submit', async function(e) {
@@ -652,6 +759,30 @@ def index():
 </body>
 </html>
     """)
+
+@app.route('/debug-experience', methods=['POST'])
+def debug_experience():
+    """Debug endpoint to test experience extraction"""
+    try:
+        resume_text = request.form.get('resumeText', '').strip()
+        jd_text = request.form.get('jdText', '').strip()
+        
+        if not resume_text:
+            return jsonify({'error': 'Please provide resume text'})
+        
+        # Extract experience with debug output
+        resume_exp = matcher.extract_experience(resume_text)
+        jd_exp = matcher.extract_experience(jd_text) if jd_text else 0
+        
+        return jsonify({
+            'resume_experience': resume_exp,
+            'jd_experience': jd_exp,
+            'text_preview': resume_text[:300],
+            'debug_info': 'Check server logs for detailed extraction debug info'
+        })
+        
+    except Exception as e:
+        return jsonify({'error': str(e)})
 
 @app.route('/analyze', methods=['POST'])
 def analyze():
