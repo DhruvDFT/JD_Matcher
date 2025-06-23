@@ -31,6 +31,20 @@ class ResumeJDMatcher:
             'technologies': 2.0,       # Technologies like "ASIC", "FPGA" 
             'general_skills': 1.0      # General terms
         }
+        
+        # Domain conflict detection - Critical for accurate matching
+        self.domain_conflicts = {
+            'vlsi_design_vs_physical': {
+                'design_keywords': ['rtl design', 'verilog', 'systemverilog', 'design compiler', 'uvm', 'verification', 'testbench', 'dv', 'design verification', 'functional verification', 'coverage', 'assertion', 'debugging simulation'],
+                'physical_keywords': ['place and route', 'pnr', 'physical design', 'icc2', 'innovus', 'floorplan', 'timing closure', 'sta', 'primetime', 'floor planning', 'routing', 'placement'],
+                'conflict_message': 'VLSI Design/Verification (Frontend) vs Physical Design (Backend Implementation)'
+            },
+            'frontend_vs_backend': {
+                'design_keywords': ['react', 'angular', 'vue', 'html', 'css', 'javascript', 'ui/ux', 'frontend'],
+                'physical_keywords': ['node.js', 'python', 'java', 'database', 'api', 'server', 'backend'],
+                'conflict_message': 'Frontend Development vs Backend Development'
+            }
+        }
     
     def extract_text_from_pdf(self, file_path: str) -> str:
         """Extract text from PDF file"""
@@ -74,6 +88,36 @@ class ResumeJDMatcher:
                 return file.read()
         except Exception as e:
             return f"Error reading TXT: {str(e)}"
+    
+    def detect_domain_conflicts(self, resume_text: str, jd_text: str) -> List[Dict]:
+        """Detect domain mismatches like DV vs PD"""
+        conflicts = []
+        resume_lower = resume_text.lower()
+        jd_lower = jd_text.lower()
+        
+        for conflict_type, conflict_data in self.domain_conflicts.items():
+            design_in_resume = any(keyword in resume_lower for keyword in conflict_data['design_keywords'])
+            physical_in_resume = any(keyword in resume_lower for keyword in conflict_data['physical_keywords'])
+            
+            design_in_jd = any(keyword in jd_lower for keyword in conflict_data['design_keywords'])
+            physical_in_jd = any(keyword in jd_lower for keyword in conflict_data['physical_keywords'])
+            
+            # Critical mismatch detection
+            if (design_in_jd and physical_in_resume and not design_in_resume) or \
+               (physical_in_jd and design_in_resume and not physical_in_resume):
+                
+                jd_domain = 'Design/Verification' if design_in_jd else 'Physical Design'
+                resume_domain = 'Design/Verification' if design_in_resume else 'Physical Design'
+                
+                conflicts.append({
+                    'type': conflict_type,
+                    'message': conflict_data['conflict_message'],
+                    'jd_domain': jd_domain,
+                    'resume_domain': resume_domain,
+                    'details': f"JD requires {jd_domain} but resume shows {resume_domain} experience"
+                })
+        
+        return conflicts
     
     def extract_text(self, file_path: str) -> str:
         """Extract text based on file extension"""
@@ -267,6 +311,9 @@ class ResumeJDMatcher:
                     'total_matches': 0
                 }
             
+            # CRITICAL: Check for domain conflicts first
+            domain_conflicts = self.detect_domain_conflicts(resume_text, jd_text)
+            
             # Extract requirements from JD
             jd_requirements = self.extract_jd_requirements(jd_text)
             
@@ -327,8 +374,16 @@ class ResumeJDMatcher:
             # Final combined score (80% skills, 20% experience)
             final_score = (overall_score * 0.8) + (exp_score * 0.2)
             
-            # Determine recommendation based on final score
-            if final_score >= 75:
+            # Apply domain conflict penalties - CRITICAL FOR ACCURACY
+            if domain_conflicts:
+                final_score = max(0, final_score - 60)  # Major penalty for domain mismatch
+            
+            # Determine recommendation based on final score and conflicts
+            if domain_conflicts:
+                recommendation = "DO NOT SEND"
+                status = "❌"
+                reason = f"CRITICAL: {domain_conflicts[0]['details']}"
+            elif final_score >= 75:
                 recommendation = "SEND"
                 status = "✅"
                 reason = "Strong keyword match with requirements"
@@ -356,7 +411,8 @@ class ResumeJDMatcher:
                 'required_experience': jd_exp,
                 'category_breakdown': category_scores,
                 'total_jd_requirements': sum(len(reqs) for reqs in jd_requirements.values()),
-                'total_matches': sum(len(cat['matches']) for cat in category_scores.values())
+                'total_matches': sum(len(cat['matches']) for cat in category_scores.values()),
+                'domain_conflicts': domain_conflicts
             }
             
         except Exception as e:
@@ -372,7 +428,8 @@ class ResumeJDMatcher:
                 'required_experience': 0,
                 'category_breakdown': {},
                 'total_jd_requirements': 0,
-                'total_matches': 0
+                'total_matches': 0,
+                'domain_conflicts': []
             }
 
 # Initialize matcher
@@ -615,7 +672,8 @@ def index():
                     required_experience: Number(data.required_experience) || 0,
                     category_breakdown: data.category_breakdown || {},
                     total_matches: Number(data.total_matches) || 0,
-                    total_jd_requirements: Number(data.total_jd_requirements) || 0
+                    total_jd_requirements: Number(data.total_jd_requirements) || 0,
+                    domain_conflicts: data.domain_conflicts || []
                 };
                 
                 // Validate data ranges
@@ -646,6 +704,19 @@ def index():
                 let detailsHtml = '<h3>Analysis Details:</h3>';
                 detailsHtml += `<p><strong>Recommendation Reason:</strong> ${safeData.reason}</p>`;
                 detailsHtml += `<p><strong>Experience:</strong> Candidate has ${safeData.resume_experience} years, Required: ${safeData.required_experience} years</p>`;
+                
+                // Show domain conflicts first - CRITICAL
+                if (safeData.domain_conflicts && safeData.domain_conflicts.length > 0) {
+                    detailsHtml += '<h4>🚨 CRITICAL DOMAIN MISMATCH:</h4>';
+                    safeData.domain_conflicts.forEach(conflict => {
+                        detailsHtml += `<div style="background: #ffebee; border: 2px solid #f44336; padding: 15px; border-radius: 5px; margin: 10px 0;">`;
+                        detailsHtml += `<strong style="color: #d32f2f;">❌ ${conflict.message}</strong><br>`;
+                        detailsHtml += `<p style="margin: 5px 0;"><strong>Issue:</strong> ${conflict.details}</p>`;
+                        detailsHtml += `<p style="margin: 5px 0;"><strong>JD Domain:</strong> ${conflict.jd_domain}</p>`;
+                        detailsHtml += `<p style="margin: 5px 0;"><strong>Resume Domain:</strong> ${conflict.resume_domain}</p>`;
+                        detailsHtml += '</div>';
+                    });
+                }
                 
                 // Show category breakdown
                 try {
