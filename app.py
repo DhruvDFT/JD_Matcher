@@ -1,4 +1,221 @@
-from flask import Flask, request, jsonify, render_template_string
+<script>
+        let selectedResumeFiles = [];
+        
+        // Handle multiple resume file selection
+        document.getElementById('resumes').addEventListener('change', function(e) {
+            const files = Array.from(e.target.files);
+            selectedResumeFiles = [...selectedResumeFiles, ...files];
+            updateResumeFilesList();
+        });
+        
+        function updateResumeFilesList() {
+            const container = document.getElementById('resumeFilesList');
+            container.innerHTML = '';
+            
+            if (selectedResumeFiles.length === 0) {
+                container.innerHTML = '<p style="color: #666; font-size: 14px;">No files selected</p>';
+                return;
+            }
+            
+            selectedResumeFiles.forEach((file, index) => {
+                const fileItem = document.createElement('div');
+                fileItem.className = 'resume-file-item';
+                fileItem.innerHTML = `
+                    <span>${file.name} (${(file.size / 1024).toFixed(1)}KB)</span>
+                    <button type="button" class="remove-file" onclick="removeResumeFile(${index})">×</button>
+                `;
+                container.appendChild(fileItem);
+            });
+        }
+        
+        function removeResumeFile(index) {
+            selectedResumeFiles.splice(index, 1);
+            updateResumeFilesList();
+        }
+        
+        function clearAll() {
+            selectedResumeFiles = [];
+            document.getElementById('resumes').value = '';
+            document.getElementById('resumeText').value = '';
+            document.getElementById('jd').value = '';
+            document.getElementById('jdText').value = '';
+            updateResumeFilesList();
+            document.getElementById('results').style.display = 'none';
+            document.getElementById('multipleResults').style.display = 'none';
+        }
+        
+        function updateProgress(current, total) {
+            const progressContainer = document.getElementById('progressContainer');
+            const progressFill = document.getElementById('progressFill');
+            const progressText = document.getElementById('progressText');
+            
+            if (total > 1) {
+                progressContainer.style.display = 'block';
+                const percentage = (current / total) * 100;
+                progressFill.style.width = percentage + '%';
+                progressText.textContent = `Processing resume ${current} of ${total}...`;
+            } else {
+                progressContainer.style.display = 'none';
+            }
+        }
+
+        function updateDomainCard(elementId, domainData) {
+            const element = document.getElementById(elementId);
+            if (!element) return;
+            
+            const confidence = domainData.confidence || 0;
+            
+            let html = `
+                <div><strong>Detected Domain:</strong> ${domainData.domain_name}</div>
+                <div><strong>Confidence:</strong> ${confidence}% (${domainData.score}/${domainData.total_keywords} keywords)</div>
+                <div class="confidence-bar">
+                    <div class="confidence-fill" style="width: ${confidence}%"></div>
+                </div>
+            `;
+            
+            if (domainData.matched_keywords && domainData.matched_keywords[domainData.primary_domain]) {
+                const keywords = domainData.matched_keywords[domainData.primary_domain];
+                if (keywords.length > 0) {
+                    html += '<div><strong>Matched Keywords:</strong></div>';
+                    html += '<div class="keywords">';
+                    keywords.slice(0, 8).forEach(keyword => {
+                        html += `<span class="keyword">${keyword}</span>`;
+                    });
+                    if (keywords.length > 8) {
+                        html += `<span class="keyword">+${keywords.length - 8} more</span>`;
+                    }
+                    html += '</div>';
+                }
+            }
+            
+            element.innerHTML = html;
+        }
+        
+        function createResultCard(filename, data, index) {
+            const resultClass = data.domains_match && (data.final_score || 0) >= 60 ? 'match' :
+                               data.recommendation && (data.recommendation.includes('MANUAL') || data.recommendation.includes('MAYBE')) ? 'review' : 'mismatch';
+            
+            return `
+                <div class="result-card ${resultClass}">
+                    <div class="result-header">
+                        <div class="result-filename">${filename}</div>
+                        <div class="result-score" style="color: ${resultClass === 'match' ? '#27ae60' : resultClass === 'review' ? '#f39c12' : '#e74c3c'}">
+                            ${data.final_score || 0}%
+                        </div>
+                    </div>
+                    <div style="margin: 10px 0;">
+                        <strong>${data.status} ${data.recommendation}</strong>
+                    </div>
+                    <div style="margin: 10px 0; color: #666;">
+                        ${data.reason}
+                    </div>
+                    <div style="display: grid; grid-template-columns: 1fr; gap: 10px; margin-top: 15px;">
+                        <div class="domain-card" style="margin: 0;">
+                            <strong>Resume Domain:</strong> ${data.resume_domain.domain_name} (${data.resume_domain.confidence}%)
+                        </div>
+                    </div>
+                    <details style="margin-top: 10px;">
+                        <summary style="cursor: pointer; font-weight: bold;">📊 View Detailed Analysis</summary>
+                        <div class="analysis-text" style="margin-top: 10px; font-size: 12px;">
+                            ${data.analysis_text || 'No detailed analysis available'}
+                        </div>
+                    </details>
+                </div>
+            `;
+        }
+
+        document.getElementById('matchForm').addEventListener('submit', async function(e) {
+            e.preventDefault();
+            
+            const loading = document.getElementById('loading');
+            const results = document.getElementById('results');
+            const multipleResults = document.getElementById('multipleResults');
+            
+            // Hide previous results
+            results.style.display = 'none';
+            multipleResults.style.display = 'none';
+            loading.style.display = 'block';
+            
+            try {
+                // Check if we have multiple resumes or single resume
+                const hasMultipleFiles = selectedResumeFiles.length > 0;
+                const hasResumeText = document.getElementById('resumeText').value.trim();
+                
+                if (hasMultipleFiles) {
+                    // Process multiple files
+                    await processMultipleResumes();
+                } else if (hasResumeText) {
+                    // Process single resume text
+                    await processSingleResume();
+                } else {
+                    throw new Error('Please provide at least one resume (file or text)');
+                }
+                
+            } catch (error) {
+                console.error('Error details:', error);
+                alert('Analysis failed: ' + error.message);
+            } finally {
+                loading.style.display = 'none';
+                updateProgress(0, 0);
+            }
+        });
+        
+        async function processSingleResume() {
+            const formData = new FormData(document.getElementById('matchForm'));
+            
+            const response = await fetch('/analyze', {
+                method: 'POST',
+                body: formData
+            });
+            
+            if (!response.ok) {
+                throw new Error(`Server error (${response.status})`);
+            }
+            
+            const data = await response.json();
+            
+            if (data.error) {
+                throw new Error(data.error);
+            }
+            
+            // Display single result
+            displaySingleResult(data);
+        }
+        
+        async function processMultipleResumes() {
+            const jdFile = document.getElementById('jd').files[0];
+            const jdText = document.getElementById('jdText').value.trim();
+            
+            if (!jdFile && !jdText) {
+                throw new Error('Please provide job description (file or text)');
+            }
+            
+            const results = [];
+            const total = selectedResumeFiles.length;
+            
+            for (let i = 0; i < selectedResumeFiles.length; i++) {
+                updateProgress(i + 1, total);
+                
+                const formData = new FormData();
+                formData.append('resumes', selectedResumeFiles[i]);
+                
+                if (jdFile) {
+                    formData.append('jd', jdFile);
+                } else {
+                    formData.append('jdText', jdText);
+                }
+                
+                try {
+                    const response = await fetch('/analyze-multiple', {
+                        method: 'POST',
+                        body: formData
+                    });
+                    
+                    if (!response.ok) {
+                        throw new Error(`Server error (${response.status})`);
+                    }
+                    
+                from flask import Flask, request, jsonify, render_template_string
 import PyPDF2
 import docx2txt
 import re
@@ -50,19 +267,152 @@ class DomainMatcher:
             }
         }
         
-        # Skills and tools detection
+        # Enhanced Skills and tools detection - Much more comprehensive
         self.skill_categories = {
             'tools': [
-                'synopsys', 'cadence', 'mentor', 'design compiler', 'icc2', 'primetime', 'innovus',
-                'vcs', 'questasim', 'modelsim', 'calibre', 'xilinx', 'altera', 'vivado', 'quartus',
-                'python', 'perl', 'tcl', 'matlab', 'git', 'eclipse'
+                # Synopsys Tools
+                'synopsys', 'design compiler', 'dc', 'icc2', 'ic compiler', 'primetime', 'pt', 
+                'vcs', 'vcs mx', 'verdi', 'dve', 'spyglass', 'formality', 'star-rc', 'hspice',
+                'custom compiler', 'sentaurus', 'proteus', 'raphael', 'tcad',
+                
+                # Cadence Tools
+                'cadence', 'innovus', 'encounter', 'genus', 'conformal', 'incisive', 'xcelium',
+                'virtuoso', 'allegro', 'pegasus', 'voltus', 'tempus', 'quantus', 'palladium',
+                'protium', 'jasper', 'jaspergold', 'stratus', 'confrml',
+                
+                # Mentor Graphics/Siemens
+                'mentor', 'calibre', 'modelsim', 'questasim', 'questa', 'tessent', 'catapult',
+                'leonardo', 'precision', 'mbist', 'atpg', 'fastscan', 'testkompress',
+                
+                # Simulation Tools
+                'ncsim', 'vcs-mx', 'questa sim', 'active-hdl', 'riviera', 'vivado simulator',
+                
+                # FPGA Tools
+                'xilinx', 'vivado', 'ise', 'vitis', 'quartus', 'altera', 'intel quartus',
+                'lattice diamond', 'libero', 'microsemi', 'radiant',
+                
+                # Programming/Scripting
+                'python', 'perl', 'tcl', 'tk', 'shell', 'bash', 'csh', 'make', 'makefile',
+                'matlab', 'octave', 'systemc', 'cpp', 'c++', 'verilog-a', 'verilog-ams',
+                
+                # Version Control & Collaboration
+                'git', 'svn', 'perforce', 'cvs', 'clearcase', 'eclipse', 'emacs', 'vim',
+                
+                # Other EDA Tools
+                'primesim', 'hspice', 'spectre', 'eldo', 'ngspice', 'ltspice', 'tanner',
+                'silvaco', 'synplify', 'blast', 'precision rtl', 'dc ultra', 'pt px',
+                
+                # Debug & Analysis
+                'ddd', 'gdb', 'valgrind', 'coverity', 'lint', 'verilator', 'gtkwave',
+                'chronos', 'signal storm', 'apache', 'redhawk'
             ],
+            
             'protocols': [
-                'axi', 'ahb', 'apb', 'pcie', 'usb', 'ddr', 'serdes', 'ethernet', 'uart', 'spi', 'i2c',
-                'mipi', 'amba', 'wishbone'
+                # Standard Protocols
+                'axi', 'axi4', 'axi-lite', 'axi-stream', 'ahb', 'apb', 'amba', 'wishbone',
+                'avalon', 'tilelink', 'chi', 'ace', 'acp',
+                
+                # High-Speed Interfaces
+                'pcie', 'pci express', 'usb', 'usb2', 'usb3', 'usb4', 'thunderbolt',
+                'sata', 'sas', 'nvme', 'ddr', 'ddr3', 'ddr4', 'ddr5', 'lpddr',
+                'gddr', 'hbm', 'hmc',
+                
+                # Serial Interfaces
+                'serdes', 'ethernet', '10gbe', '25gbe', '40gbe', '100gbe', 'tse',
+                'uart', 'spi', 'i2c', 'i2s', 'i3c', 'can', 'flexray', 'lin',
+                
+                # Display & Graphics
+                'mipi', 'dsi', 'csi', 'hdmi', 'displayport', 'dp', 'edp', 'lvds',
+                'rgb', 'dvi', 'vga',
+                
+                # Memory Interfaces
+                'jedec', 'onfi', 'toggle', 'cfi', 'qspi', 'ospi', 'hyperbus',
+                
+                # Network Protocols
+                'tcp', 'udp', 'ip', 'ipv4', 'ipv6', 'mac', 'phy', 'rgmii', 'sgmii',
+                'xgmii', 'interlaken', 'aurora',
+                
+                # Processor Interfaces
+                'arm', 'risc-v', 'x86', 'mips', 'powerpc', 'cortex', 'neon',
+                'trustzone', 'smmu', 'gic'
             ],
+            
             'technologies': [
-                'asic', 'fpga', 'soc', 'ip', 'risc', 'arm', 'cpu', 'gpu', 'memory', 'cache', 'pipeline'
+                # Chip Technologies
+                'asic', 'fpga', 'soc', 'noc', 'chiplet', 'ip', 'soft ip', 'hard ip',
+                'platform', 'subsystem', 'tile',
+                
+                # Design Methodologies
+                'rtl', 'hdl', 'verilog', 'systemverilog', 'vhdl', 'systemc', 'tlm',
+                'chisel', 'bluespec', 'hls', 'c-to-rtl',
+                
+                # Process Technologies
+                '7nm', '5nm', '3nm', '10nm', '14nm', '16nm', '22nm', '28nm', '40nm',
+                'finfet', 'planar', 'soi', 'bulk', 'gaafet',
+                
+                # Memory Technologies
+                'sram', 'dram', 'flash', 'emmc', 'ufs', 'nvram', 'mram', 'rram',
+                'cache', 'tcm', 'scratchpad',
+                
+                # Processor Architectures
+                'cpu', 'gpu', 'dsp', 'mcu', 'dpu', 'npu', 'ai', 'ml', 'neural',
+                'vector', 'simd', 'risc', 'cisc', 'superscalar', 'pipeline',
+                
+                # Design Concepts
+                'clock domain crossing', 'cdc', 'reset domain crossing', 'rdc',
+                'power gating', 'clock gating', 'dvfs', 'avs', 'retention',
+                'low power', 'ultra low power', 'always on',
+                
+                # Security & Reliability
+                'cryptography', 'aes', 'rsa', 'sha', 'ecc', 'puf', 'trng', 'prng',
+                'secure boot', 'attestation', 'isolation', 'firewall',
+                
+                # Analog/Mixed Signal
+                'analog', 'mixed signal', 'ams', 'pll', 'dll', 'adc', 'dac',
+                'lvds', 'serdes phy', 'oscillator', 'bandgap', 'ldo', 'dcdc'
+            ],
+            
+            'verification_methodologies': [
+                # Verification Methodologies
+                'uvm', 'ovm', 'vmm', 'constrained random', 'directed test',
+                'coverage driven', 'assertion based', 'formal verification',
+                'equivalence checking', 'model checking', 'theorem proving',
+                
+                # Verification Concepts
+                'testbench', 'test harness', 'bfm', 'vip', 'verification ip',
+                'monitor', 'scoreboard', 'checker', 'predictor', 'driver',
+                'sequencer', 'sequence', 'virtual sequence',
+                
+                # Coverage Types
+                'functional coverage', 'code coverage', 'toggle coverage',
+                'fsm coverage', 'expression coverage', 'branch coverage',
+                'assertion coverage', 'cross coverage',
+                
+                # Debug & Analysis
+                'waveform', 'fsdb', 'vcd', 'vpd', 'shm', 'regression',
+                'debug', 'trace', 'profiling', 'performance analysis'
+            ],
+            
+            'design_flows': [
+                # Design Flow Stages
+                'architecture', 'microarchitecture', 'rtl design', 'synthesis',
+                'place and route', 'pnr', 'physical design', 'backend',
+                'frontend', 'implementation', 'integration',
+                
+                # Physical Design Steps
+                'floorplan', 'floorplanning', 'placement', 'routing', 'cts',
+                'clock tree synthesis', 'optimization', 'eco', 'metal fill',
+                'finishing', 'streamout', 'gds', 'oasis',
+                
+                # Analysis & Verification
+                'timing analysis', 'sta', 'power analysis', 'ir drop',
+                'em analysis', 'signal integrity', 'si', 'crosstalk',
+                'noise analysis', 'jitter', 'eye diagram',
+                
+                # Manufacturing & Test
+                'dft', 'design for test', 'scan', 'bist', 'mbist', 'lbist',
+                'atpg', 'boundary scan', 'jtag', 'test compression',
+                'fault simulation', 'stuck at', 'transition delay'
             ]
         }
     
@@ -239,7 +589,9 @@ class DomainMatcher:
         found_skills = {
             'tools': [],
             'protocols': [],
-            'technologies': []
+            'technologies': [],
+            'verification_methodologies': [],
+            'design_flows': []
         }
         
         for category, skills_list in self.skill_categories.items():
@@ -380,11 +732,18 @@ Skills Analysis:
         if skill_scores:
             analysis_text += "\nSkills Breakdown:\n"
             for category, data in skill_scores.items():
-                analysis_text += f"- {category.title()}: {data['score']}% ({len(data['matched'])}/{data['total_required']})\n"
+                category_display = category.replace('_', ' ').title()
+                analysis_text += f"- {category_display}: {data['score']}% ({len(data['matched'])}/{data['total_required']})\n"
                 if data['matched']:
-                    analysis_text += f"  ✅ Matched: {', '.join(data['matched'][:5])}\n"
+                    matched_display = ', '.join(data['matched'][:8])  # Show first 8
+                    if len(data['matched']) > 8:
+                        matched_display += f" +{len(data['matched'])-8} more"
+                    analysis_text += f"  ✅ Matched: {matched_display}\n"
                 if data['missing']:
-                    analysis_text += f"  ❌ Missing: {', '.join(data['missing'][:5])}\n"
+                    missing_display = ', '.join(data['missing'][:8])  # Show first 8  
+                    if len(data['missing']) > 8:
+                        missing_display += f" +{len(data['missing'])-8} more"
+                    analysis_text += f"  ❌ Missing: {missing_display}\n"
         
         return {
             'recommendation': recommendation,
@@ -414,19 +773,20 @@ def index():
             font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
             max-width: 1200px;
             margin: 0 auto;
-            padding: 20px;
+            padding: 10px;
             background-color: #f5f5f5;
         }
         .container {
             background: white;
-            padding: 30px;
+            padding: 20px;
             border-radius: 10px;
             box-shadow: 0 4px 6px rgba(0,0,0,0.1);
         }
         h1 {
             color: #2c3e50;
             text-align: center;
-            margin-bottom: 30px;
+            margin-bottom: 20px;
+            font-size: 24px;
         }
         .phase-info {
             background: #e3f2fd;
@@ -434,16 +794,31 @@ def index():
             border-radius: 5px;
             margin: 15px 0;
             border-left: 4px solid #2196f3;
+            font-size: 14px;
         }
         .upload-section {
             display: grid;
-            grid-template-columns: 1fr 1fr;
-            gap: 30px;
-            margin-bottom: 30px;
+            grid-template-columns: 1fr;
+            gap: 20px;
+            margin-bottom: 20px;
         }
+        
+        /* Mobile responsive - stack vertically on small screens */
+        @media (min-width: 768px) {
+            .upload-section {
+                grid-template-columns: 2fr 1fr;
+            }
+            .container {
+                padding: 30px;
+            }
+            h1 {
+                font-size: 28px;
+            }
+        }
+        
         .upload-box {
             border: 2px dashed #3498db;
-            padding: 20px;
+            padding: 15px;
             border-radius: 8px;
             text-align: center;
             background-color: #f8f9fa;
@@ -451,46 +826,163 @@ def index():
         .upload-box h3 {
             color: #2c3e50;
             margin-bottom: 15px;
+            font-size: 18px;
         }
+        
+        /* Multiple resume upload styling */
+        .resume-upload-area {
+            border: 2px dashed #27ae60;
+            padding: 20px;
+            border-radius: 8px;
+            background-color: #f8fff8;
+            margin-bottom: 15px;
+        }
+        
+        .resume-files-list {
+            margin: 10px 0;
+            text-align: left;
+        }
+        
+        .resume-file-item {
+            background: #e8f5e8;
+            padding: 8px 12px;
+            margin: 5px 0;
+            border-radius: 5px;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            font-size: 14px;
+        }
+        
+        .remove-file {
+            background: #e74c3c;
+            color: white;
+            border: none;
+            padding: 2px 8px;
+            border-radius: 3px;
+            cursor: pointer;
+            font-size: 12px;
+        }
+        
         input[type="file"] {
             margin: 10px 0;
             padding: 8px;
             border: 1px solid #ddd;
             border-radius: 4px;
             width: 100%;
+            font-size: 14px;
         }
+        
+        /* Make file input more mobile friendly */
+        input[type="file"]::-webkit-file-upload-button {
+            background: #3498db;
+            color: white;
+            border: none;
+            padding: 8px 15px;
+            border-radius: 4px;
+            cursor: pointer;
+            margin-right: 10px;
+        }
+        
         textarea {
             width: 100%;
-            height: 150px;
+            height: 120px;
             padding: 10px;
             border: 1px solid #ddd;
             border-radius: 4px;
             resize: vertical;
             font-family: Arial, sans-serif;
+            font-size: 14px;
         }
+        
+        @media (min-width: 768px) {
+            textarea {
+                height: 150px;
+            }
+        }
+        
         button {
             background-color: #3498db;
             color: white;
-            padding: 12px 30px;
+            padding: 12px 20px;
             border: none;
             border-radius: 5px;
             cursor: pointer;
             font-size: 16px;
             display: block;
-            margin: 20px auto;
+            margin: 15px auto;
+            width: 100%;
+            max-width: 300px;
         }
         button:hover {
             background-color: #2980b9;
         }
+        
+        .button-group {
+            display: flex;
+            flex-direction: column;
+            gap: 10px;
+            align-items: center;
+        }
+        
+        @media (min-width: 768px) {
+            .button-group {
+                flex-direction: row;
+                justify-content: center;
+            }
+            button {
+                width: auto;
+                margin: 0;
+            }
+        }
+        
         .results {
-            margin-top: 30px;
-            padding: 20px;
+            margin-top: 20px;
+            padding: 15px;
             border-radius: 8px;
             display: none;
         }
         .match { background-color: #d4edda; border: 1px solid #c3e6cb; }
         .mismatch { background-color: #f8d7da; border: 1px solid #f5c6cb; }
         .review { background-color: #fff3cd; border: 1px solid #ffeaa7; }
+        
+        /* Multiple results styling */
+        .multiple-results {
+            display: none;
+        }
+        
+        .result-card {
+            background: white;
+            margin: 10px 0;
+            padding: 15px;
+            border-radius: 8px;
+            box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+            border-left: 5px solid #3498db;
+        }
+        
+        .result-card.match { border-left-color: #27ae60; }
+        .result-card.mismatch { border-left-color: #e74c3c; }
+        .result-card.review { border-left-color: #f39c12; }
+        
+        .result-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-bottom: 10px;
+            flex-wrap: wrap;
+        }
+        
+        .result-filename {
+            font-weight: bold;
+            color: #2c3e50;
+            font-size: 16px;
+        }
+        
+        .result-score {
+            font-size: 18px;
+            font-weight: bold;
+        }
+        
         .domain-card {
             background: white;
             padding: 15px;
@@ -500,7 +992,7 @@ def index():
         }
         .confidence-bar {
             background: #f0f0f0;
-            height: 20px;
+            height: 15px;
             border-radius: 10px;
             margin: 10px 0;
             overflow: hidden;
@@ -548,51 +1040,103 @@ def index():
             margin: 15px 0;
             white-space: pre-line;
             font-family: monospace;
-            font-size: 14px;
+            font-size: 12px;
+            overflow-x: auto;
         }
+        
+        @media (min-width: 768px) {
+            .analysis-text {
+                font-size: 14px;
+            }
+        }
+        
         .score-display {
             text-align: center;
             margin: 15px 0;
-            font-size: 24px;
+            font-size: 20px;
             font-weight: bold;
             color: #2c3e50;
+        }
+        
+        @media (min-width: 768px) {
+            .score-display {
+                font-size: 24px;
+            }
+        }
+        
+        /* Progress indicator for multiple resume processing */
+        .progress-container {
+            display: none;
+            margin: 20px 0;
+        }
+        
+        .progress-bar {
+            background: #f0f0f0;
+            height: 20px;
+            border-radius: 10px;
+            overflow: hidden;
+        }
+        
+        .progress-fill {
+            background: #3498db;
+            height: 100%;
+            transition: width 0.3s ease;
+        }
+        
+        .progress-text {
+            text-align: center;
+            margin: 10px 0;
+            font-size: 14px;
+            color: #666;
         }
     </style>
 </head>
 <body>
     <div class="container">
-        <h1>🎯 Complete Domain + Skills Matcher</h1>
+        <h1>📱 Multi-Resume Matcher</h1>
         
         <div class="phase-info">
-            <strong>📋 Complete Analysis:</strong> Domain detection + Skills analysis + Experience matching
+            <strong>📋 Batch Analysis:</strong> Upload multiple resumes to compare against one job description. Mobile-friendly interface for on-the-go recruitment.
         </div>
         
         <form id="matchForm">
             <div class="upload-section">
-                <div class="upload-box">
-                    <h3>📄 Resume</h3>
-                    <input type="file" id="resume" name="resume" accept=".pdf,.docx,.txt">
-                    <p>Or paste text:</p>
+                <div class="resume-upload-area">
+                    <h3>📄 Resumes (Multiple Upload)</h3>
+                    <input type="file" id="resumes" name="resumes" accept=".pdf,.docx,.txt" multiple>
+                    <div class="resume-files-list" id="resumeFilesList"></div>
+                    <p style="margin: 10px 0; font-size: 14px;">Or paste single resume text:</p>
                     <textarea id="resumeText" name="resumeText" placeholder="Paste resume content here..."></textarea>
                 </div>
                 
                 <div class="upload-box">
                     <h3>📋 Job Description</h3>
                     <input type="file" id="jd" name="jd" accept=".pdf,.docx,.txt">
-                    <p>Or paste text:</p>
+                    <p style="margin: 10px 0; font-size: 14px;">Or paste text:</p>
                     <textarea id="jdText" name="jdText" placeholder="Paste job description here..."></textarea>
                 </div>
             </div>
             
-            <button type="submit">🔍 Analyze Complete Match</button>
-            <button type="button" onclick="testExperience()" style="background-color: #f39c12; margin-left: 10px;">🔧 Test Experience Extraction</button>
+            <div class="button-group">
+                <button type="submit">🔍 Analyze All Resumes</button>
+                <button type="button" onclick="testExperience()" style="background-color: #f39c12;">🔧 Test Experience</button>
+                <button type="button" onclick="clearAll()" style="background-color: #95a5a6;">🗑️ Clear All</button>
+            </div>
         </form>
         
         <div class="loading" id="loading">
             <div class="spinner"></div>
-            <p>Analyzing match...</p>
+            <p>Analyzing matches...</p>
         </div>
         
+        <div class="progress-container" id="progressContainer">
+            <div class="progress-text" id="progressText">Processing resumes...</div>
+            <div class="progress-bar">
+                <div class="progress-fill" id="progressFill"></div>
+            </div>
+        </div>
+        
+        <!-- Single resume results -->
         <div class="results" id="results">
             <h2 id="recommendation"></h2>
             <p id="reason"></p>
@@ -602,7 +1146,7 @@ def index():
                 <div style="font-size: 14px; font-weight: normal;">Overall Match Score</div>
             </div>
             
-            <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 20px; margin-top: 20px;">
+            <div style="display: grid; grid-template-columns: 1fr; gap: 15px; margin-top: 20px;">
                 <div class="domain-card">
                     <h4>📄 Resume Domain</h4>
                     <div id="resumeDomain"></div>
@@ -616,6 +1160,16 @@ def index():
             <div class="domain-card">
                 <h4>📊 Complete Analysis</h4>
                 <div class="analysis-text" id="analysisText"></div>
+            </div>
+        </div>
+        
+        <!-- Multiple resume results -->
+        <div class="multiple-results" id="multipleResults">
+            <h2>📊 Batch Analysis Results</h2>
+            <div id="resultsContainer"></div>
+            <div class="domain-card">
+                <h4>📋 Job Description Summary</h4>
+                <div id="jdSummary"></div>
             </div>
         </div>
     </div>
@@ -648,7 +1202,113 @@ def index():
                 }
             }
             
-            element.innerHTML = html;
+                    const data = await response.json();
+                    
+                    if (data.error) {
+                        results.push({
+                            filename: selectedResumeFiles[i].name,
+                            error: data.error,
+                            status: '❌',
+                            recommendation: 'ERROR',
+                            reason: data.error,
+                            final_score: 0
+                        });
+                    } else {
+                        results.push({
+                            filename: selectedResumeFiles[i].name,
+                            ...data
+                        });
+                    }
+                } catch (error) {
+                    results.push({
+                        filename: selectedResumeFiles[i].name,
+                        error: error.message,
+                        status: '❌',
+                        recommendation: 'ERROR',
+                        reason: error.message,
+                        final_score: 0
+                    });
+                }
+            }
+            
+            displayMultipleResults(results);
+        }
+        
+        function displaySingleResult(data) {
+            const results = document.getElementById('results');
+            
+            // Update recommendation
+            document.getElementById('recommendation').textContent = data.status + ' ' + data.recommendation;
+            document.getElementById('reason').textContent = data.reason;
+            
+            // Show overall score if available
+            if (data.final_score !== undefined && data.final_score > 0) {
+                document.getElementById('overallScore').style.display = 'block';
+                document.getElementById('scoreValue').textContent = data.final_score + '%';
+            } else {
+                document.getElementById('overallScore').style.display = 'none';
+            }
+            
+            // Set result styling
+            results.className = 'results';
+            if (data.domains_match && (data.final_score || 0) >= 60) {
+                results.classList.add('match');
+            } else if (data.recommendation && (data.recommendation.includes('MANUAL') || data.recommendation.includes('MAYBE'))) {
+                results.classList.add('review');
+            } else {
+                results.classList.add('mismatch');
+            }
+            
+            // Update domain cards
+            updateDomainCard('resumeDomain', data.resume_domain);
+            updateDomainCard('jdDomain', data.jd_domain);
+            
+            // Show analysis text
+            if (data.analysis_text) {
+                document.getElementById('analysisText').textContent = data.analysis_text;
+            }
+            
+            results.style.display = 'block';
+        }
+        
+        function displayMultipleResults(results) {
+            const multipleResults = document.getElementById('multipleResults');
+            const resultsContainer = document.getElementById('resultsContainer');
+            
+            // Sort results by score (highest first)
+            results.sort((a, b) => (b.final_score || 0) - (a.final_score || 0));
+            
+            // Generate result cards
+            let html = '';
+            results.forEach((result, index) => {
+                html += createResultCard(result.filename, result, index);
+            });
+            
+            resultsContainer.innerHTML = html;
+            
+            // Show summary statistics
+            const totalResumes = results.length;
+            const strongMatches = results.filter(r => (r.final_score || 0) >= 75).length;
+            const goodMatches = results.filter(r => (r.final_score || 0) >= 60 && (r.final_score || 0) < 75).length;
+            const weakMatches = results.filter(r => (r.final_score || 0) < 60).length;
+            const errors = results.filter(r => r.error).length;
+            
+            // Get JD domain from first successful result
+            const firstSuccessfulResult = results.find(r => !r.error && r.jd_domain);
+            if (firstSuccessfulResult) {
+                document.getElementById('jdSummary').innerHTML = `
+                    <div><strong>Required Domain:</strong> ${firstSuccessfulResult.jd_domain.domain_name}</div>
+                    <div><strong>Confidence:</strong> ${firstSuccessfulResult.jd_domain.confidence}%</div>
+                    <div style="margin-top: 15px;"><strong>📊 Summary:</strong></div>
+                    <div>• <span style="color: #27ae60;">Strong Matches (75%+):</span> ${strongMatches}</div>
+                    <div>• <span style="color: #f39c12;">Good Matches (60-74%):</span> ${goodMatches}</div>
+                    <div>• <span style="color: #e74c3c;">Weak Matches (<60%):</span> ${weakMatches}</div>
+                    ${errors > 0 ? `<div>• <span style="color: #95a5a6;">Errors:</span> ${errors}</div>` : ''}
+                    <div style="margin-top: 10px;"><strong>Total Processed:</strong> ${totalResumes} resumes</div>
+                `;
+            }
+            
+            multipleResults.style.display = 'block';
         }
 
         function testExperience() {
@@ -686,79 +1346,63 @@ ${data.debug_info}`);
                 alert('Test failed: ' + error.message);
             });
         }
-
-        document.getElementById('matchForm').addEventListener('submit', async function(e) {
-            e.preventDefault();
-            
-            const loading = document.getElementById('loading');
-            const results = document.getElementById('results');
-            
-            loading.style.display = 'block';
-            results.style.display = 'none';
-            
-            const formData = new FormData(this);
-            
-            try {
-                const response = await fetch('/analyze', {
-                    method: 'POST',
-                    body: formData
-                });
-                
-                if (!response.ok) {
-                    throw new Error(`Server error (${response.status})`);
-                }
-                
-                const data = await response.json();
-                
-                if (data.error) {
-                    alert('Error: ' + data.error);
-                    return;
-                }
-                
-                // Update recommendation
-                document.getElementById('recommendation').textContent = data.status + ' ' + data.recommendation;
-                document.getElementById('reason').textContent = data.reason;
-                
-                // Show overall score if available
-                if (data.final_score !== undefined && data.final_score > 0) {
-                    document.getElementById('overallScore').style.display = 'block';
-                    document.getElementById('scoreValue').textContent = data.final_score + '%';
-                } else {
-                    document.getElementById('overallScore').style.display = 'none';
-                }
-                
-                // Set result styling
-                results.className = 'results';
-                if (data.domains_match && (data.final_score || 0) >= 60) {
-                    results.classList.add('match');
-                } else if (data.recommendation && (data.recommendation.includes('MANUAL') || data.recommendation.includes('MAYBE'))) {
-                    results.classList.add('review');
-                } else {
-                    results.classList.add('mismatch');
-                }
-                
-                // Update domain cards
-                updateDomainCard('resumeDomain', data.resume_domain);
-                updateDomainCard('jdDomain', data.jd_domain);
-                
-                // Show analysis text
-                if (data.analysis_text) {
-                    document.getElementById('analysisText').textContent = data.analysis_text;
-                }
-                
-                results.style.display = 'block';
-                
-            } catch (error) {
-                console.error('Error details:', error);
-                alert('Analysis failed: ' + error.message);
-            } finally {
-                loading.style.display = 'none';
-            }
-        });
+        
+        // Initialize
+        updateResumeFilesList();
     </script>
 </body>
 </html>
     """)
+
+@app.route('/analyze-multiple', methods=['POST'])
+def analyze_multiple():
+    """Analyze single resume from multiple upload"""
+    try:
+        resume_text = ""
+        jd_text = ""
+        
+        # Handle single resume from multiple upload
+        if 'resumes' in request.files:
+            resume_file = request.files['resumes']
+            if resume_file.filename:
+                filename = secure_filename(resume_file.filename)
+                resume_path = os.path.join(app.config['UPLOAD_FOLDER'], filename)
+                resume_file.save(resume_path)
+                resume_text = matcher.extract_text(resume_path)
+                os.remove(resume_path)
+                
+                if resume_text.startswith('Error') or resume_text.startswith('No'):
+                    return jsonify({'error': f'Resume file issue: {resume_text}'})
+        
+        # Handle JD input
+        if 'jd' in request.files and request.files['jd'].filename:
+            jd_file = request.files['jd']
+            filename = secure_filename(jd_file.filename)
+            jd_path = os.path.join(app.config['UPLOAD_FOLDER'], filename)
+            jd_file.save(jd_path)
+            jd_text = matcher.extract_text(jd_path)
+            os.remove(jd_path)
+            
+            if jd_text.startswith('Error') or jd_text.startswith('No'):
+                return jsonify({'error': f'JD file issue: {jd_text}'})
+                
+        elif request.form.get('jdText'):
+            jd_text = request.form.get('jdText').strip()
+        
+        # Validation
+        if not resume_text or len(resume_text) < 20:
+            return jsonify({'error': 'Resume text too short or empty'})
+        
+        if not jd_text or len(jd_text) < 20:
+            return jsonify({'error': 'Job description text too short or empty'})
+        
+        # Analyze domains
+        results = matcher.compare_domains(resume_text, jd_text)
+        return jsonify(results)
+        
+    except Exception as e:
+        print(f"Error in analyze-multiple endpoint: {str(e)}")
+        return jsonify({'error': f'Server error: {str(e)}'})
 
 @app.route('/debug-experience', methods=['POST'])
 def debug_experience():
