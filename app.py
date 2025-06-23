@@ -14,7 +14,7 @@ os.makedirs('uploads', exist_ok=True)
 
 class DomainMatcher:
     def __init__(self):
-        # Define clear domain patterns
+        # Define clear domain patterns (KEEP EXISTING - WORKING)
         self.domains = {
             'design_verification': {
                 'name': 'Design Verification (DV)',
@@ -48,6 +48,22 @@ class DomainMatcher:
                     'protocol implementation', 'datapath design', 'control logic', 'state machine'
                 ]
             }
+        }
+        
+        # ADD: Skills and tools detection (NEW ADDITION)
+        self.skill_categories = {
+            'tools': [
+                'synopsys', 'cadence', 'mentor', 'design compiler', 'icc2', 'primetime', 'innovus',
+                'vcs', 'questasim', 'modelsim', 'calibre', 'xilinx', 'altera', 'vivado', 'quartus',
+                'python', 'perl', 'tcl', 'matlab', 'git', 'eclipse'
+            ],
+            'protocols': [
+                'axi', 'ahb', 'apb', 'pcie', 'usb', 'ddr', 'serdes', 'ethernet', 'uart', 'spi', 'i2c',
+                'mipi', 'amba', 'wishbone'
+            ],
+            'technologies': [
+                'asic', 'fpga', 'soc', 'ip', 'risc', 'arm', 'cpu', 'gpu', 'memory', 'cache', 'pipeline'
+            ]
         }
     
     def extract_text_from_pdf(self, file_path: str) -> str:
@@ -96,6 +112,76 @@ class DomainMatcher:
         else:
             return "Unsupported file format"
     
+    # ADD: Experience extraction method
+    def extract_experience(self, text: str) -> int:
+        """Extract years of experience from text"""
+        patterns = [
+            r'(\d+)\+?\s*years?\s*(?:of\s*)?experience',
+            r'experience\s*(?:of\s*)?(\d+)\+?\s*years?',
+            r'(\d+)\+?\s*yrs?\s*(?:of\s*)?experience',
+            r'(\d+)\+?\s*years?\s*(?:in|working|as)',
+            r'total\s*(?:of\s*)?(\d+)\+?\s*years?',
+            r'over\s*(\d+)\+?\s*years?',
+            r'more\s*than\s*(\d+)\+?\s*years?',
+            r'having\s*(\d+)\+?\s*years?',
+            r'with\s*(\d+)\+?\s*years?\s*(?:of\s*)?experience'
+        ]
+        
+        experience_years = []
+        text_lower = text.lower()
+        
+        for pattern in patterns:
+            matches = re.findall(pattern, text_lower)
+            if matches:
+                for match in matches:
+                    try:
+                        years = int(match)
+                        if 0 <= years <= 50:
+                            experience_years.append(years)
+                    except:
+                        continue
+        
+        # Also check employment date ranges
+        current_year = 2025
+        date_patterns = [
+            r'(\d{4})\s*-\s*(?:present|current|till\s*date)',
+            r'(\d{4})\s*to\s*(?:present|current)',
+            r'since\s*(\d{4})',
+            r'from\s*(\d{4})\s*to\s*(?:present|current)'
+        ]
+        
+        for pattern in date_patterns:
+            matches = re.findall(pattern, text_lower)
+            for match in matches:
+                try:
+                    start_year = int(match)
+                    if 1990 <= start_year <= current_year:
+                        calculated_years = current_year - start_year
+                        if calculated_years <= 40:
+                            experience_years.append(calculated_years)
+                except:
+                    continue
+        
+        return max(experience_years) if experience_years else 0
+    
+    # ADD: Skills matching method
+    def extract_skills(self, text: str) -> Dict:
+        """Extract skills from text"""
+        text_lower = text.lower()
+        found_skills = {
+            'tools': [],
+            'protocols': [],
+            'technologies': []
+        }
+        
+        for category, skills_list in self.skill_categories.items():
+            for skill in skills_list:
+                if skill in text_lower:
+                    found_skills[category].append(skill)
+        
+        return found_skills
+    
+    # KEEP EXISTING: Domain detection (UNCHANGED)
     def detect_domain(self, text: str) -> Dict:
         """Detect the primary domain of a text"""
         text_lower = text.lower()
@@ -139,36 +225,101 @@ class DomainMatcher:
             'matched_keywords': matched_keywords
         }
     
+    # ENHANCED: Complete comparison method
     def compare_domains(self, resume_text: str, jd_text: str) -> Dict:
-        """Compare domains between resume and JD"""
+        """Compare domains between resume and JD + skills and experience"""
         
+        # STEP 1: Domain matching (KEEP EXISTING LOGIC)
         resume_domain = self.detect_domain(resume_text)
         jd_domain = self.detect_domain(jd_text)
-        
-        # Determine if domains match
         domains_match = resume_domain['primary_domain'] == jd_domain['primary_domain']
         
-        # Determine recommendation
+        # STEP 2: Experience comparison (NEW)
+        resume_exp = self.extract_experience(resume_text)
+        jd_exp = self.extract_experience(jd_text)
+        exp_match = resume_exp >= jd_exp if jd_exp > 0 else True
+        exp_score = min(resume_exp / jd_exp * 100, 100) if jd_exp > 0 else 100
+        
+        # STEP 3: Skills comparison (NEW)
+        resume_skills = self.extract_skills(resume_text)
+        jd_skills = self.extract_skills(jd_text)
+        
+        # Calculate skill match percentages
+        skill_scores = {}
+        overall_skill_score = 0
+        total_categories = 0
+        
+        for category in ['tools', 'protocols', 'technologies']:
+            jd_category_skills = set(jd_skills[category])
+            resume_category_skills = set(resume_skills[category])
+            
+            if jd_category_skills:  # Only count if JD has requirements in this category
+                matches = jd_category_skills.intersection(resume_category_skills)
+                score = (len(matches) / len(jd_category_skills)) * 100
+                skill_scores[category] = {
+                    'score': round(score, 1),
+                    'matched': list(matches),
+                    'missing': list(jd_category_skills - matches),
+                    'total_required': len(jd_category_skills)
+                }
+                overall_skill_score += score
+                total_categories += 1
+        
+        overall_skill_score = overall_skill_score / total_categories if total_categories > 0 else 0
+        
+        # STEP 4: Final recommendation (ENHANCED LOGIC)
         if resume_domain['primary_domain'] == 'unknown' or jd_domain['primary_domain'] == 'unknown':
             recommendation = "MANUAL REVIEW"
             status = "⚠️"
             reason = "Unable to clearly identify domain from text"
-        elif domains_match:
-            recommendation = "DOMAIN MATCH - PROCEED"
-            status = "✅"
-            reason = f"Both resume and JD are in {resume_domain['domain_name']} domain"
-        else:
+            final_score = 0
+        elif not domains_match:
             recommendation = "DOMAIN MISMATCH - DO NOT SEND"
             status = "❌"
             reason = f"Resume is {resume_domain['domain_name']} but JD requires {jd_domain['domain_name']}"
+            final_score = 0
+        else:
+            # Domain matches, now check skills and experience
+            final_score = (overall_skill_score * 0.7) + (exp_score * 0.3)
+            
+            if final_score >= 75 and exp_match:
+                recommendation = "STRONG MATCH - SEND"
+                status = "✅"
+                reason = f"Domain match with {final_score:.1f}% overall compatibility"
+            elif final_score >= 60 and exp_match:
+                recommendation = "GOOD MATCH - SEND"
+                status = "✅"
+                reason = f"Domain match with {final_score:.1f}% compatibility"
+            elif final_score >= 45:
+                recommendation = "PARTIAL MATCH - MAYBE SEND"
+                status = "⚠️"
+                reason = f"Domain match but some skill gaps ({final_score:.1f}% match)"
+            else:
+                recommendation = "WEAK MATCH - DO NOT SEND"
+                status = "❌"
+                reason = f"Domain match but significant skill/experience gaps ({final_score:.1f}% match)"
         
         return {
             'recommendation': recommendation,
             'status': status,
             'reason': reason,
+            'final_score': round(final_score, 1),
             'domains_match': domains_match,
             'resume_domain': resume_domain,
-            'jd_domain': jd_domain
+            'jd_domain': jd_domain,
+            # NEW: Additional analysis
+            'experience_analysis': {
+                'resume_years': resume_exp,
+                'required_years': jd_exp,
+                'experience_match': exp_match,
+                'experience_score': round(exp_score, 1)
+            },
+            'skills_analysis': {
+                'overall_skill_score': round(overall_skill_score, 1),
+                'category_scores': skill_scores,
+                'resume_skills': resume_skills,
+                'jd_skills': jd_skills
+            }
         }
 
 # Initialize matcher
@@ -360,6 +511,12 @@ def index():
             <h2 id="recommendation"></h2>
             <p id="reason"></p>
             
+            <!-- ADD: Overall score display -->
+            <div id="overallScore" style="text-align: center; margin: 15px 0; display: none;">
+                <div style="font-size: 24px; font-weight: bold; color: #2c3e50;" id="scoreValue"></div>
+                <div style="color: #666;">Overall Match Score</div>
+            </div>
+            
             <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 20px; margin-top: 20px;">
                 <div class="domain-card">
                     <h4>📄 Resume Domain</h4>
@@ -368,6 +525,21 @@ def index():
                 <div class="domain-card">
                     <h4>📋 JD Domain</h4>
                     <div id="jdDomain"></div>
+                </div>
+            </div>
+            
+            <!-- ADD: Additional analysis sections -->
+            <div id="additionalAnalysis" style="display: none; margin-top: 20px;">
+                <!-- Experience Analysis -->
+                <div class="domain-card">
+                    <h4>⏱️ Experience Analysis</h4>
+                    <div id="experienceAnalysis"></div>
+                </div>
+                
+                <!-- Skills Analysis -->
+                <div class="domain-card">
+                    <h4>🛠️ Skills Analysis</h4>
+                    <div id="skillsAnalysis"></div>
                 </div>
             </div>
         </div>
@@ -406,19 +578,42 @@ def index():
                 document.getElementById('recommendation').textContent = data.status + ' ' + data.recommendation;
                 document.getElementById('reason').textContent = data.reason;
                 
+                // Show overall score if available
+                if (data.final_score !== undefined && data.final_score > 0) {
+                    document.getElementById('overallScore').style.display = 'block';
+                    document.getElementById('scoreValue').textContent = data.final_score + '%';
+                } else {
+                    document.getElementById('overallScore').style.display = 'none';
+                }
+                
                 // Set result styling
                 results.className = 'results';
-                if (data.domains_match) {
+                if (data.domains_match && data.final_score >= 60) {
                     results.classList.add('match');
-                } else if (data.recommendation.includes('MANUAL')) {
+                } else if (data.recommendation.includes('MANUAL') || data.recommendation.includes('MAYBE')) {
                     results.classList.add('review');
                 } else {
                     results.classList.add('mismatch');
                 }
                 
-                // Update domain cards
+                // Update domain cards (KEEP EXISTING)
                 updateDomainCard('resumeDomain', data.resume_domain);
                 updateDomainCard('jdDomain', data.jd_domain);
+                
+                // Show additional analysis if available
+                if (data.experience_analysis || data.skills_analysis) {
+                    document.getElementById('additionalAnalysis').style.display = 'block';
+                    
+                    if (data.experience_analysis) {
+                        updateExperienceAnalysis(data.experience_analysis);
+                    }
+                    
+                    if (data.skills_analysis) {
+                        updateSkillsAnalysis(data.skills_analysis);
+                    }
+                } else {
+                    document.getElementById('additionalAnalysis').style.display = 'none';
+                }
                 
                 results.style.display = 'block';
                 
