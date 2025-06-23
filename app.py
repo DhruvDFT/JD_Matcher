@@ -2,12 +2,11 @@ from flask import Flask, request, jsonify, render_template_string
 import PyPDF2
 import docx2txt
 import re
-from typing import Dict, List, Tuple
+from typing import Dict, List
 import os
 from werkzeug.utils import secure_filename
 
 app = Flask(__name__)
-app.config['MAX_CONTENT_LENGTH'] = 16 * 1024 * 1024  # 16MB max file size
 app.config['UPLOAD_FOLDER'] = 'uploads'
 
 # Create uploads directory
@@ -33,6 +32,62 @@ class ResumeJDMatcher:
             'general_skills': 1.0      # General terms
         }
     
+    def extract_text_from_pdf(self, file_path: str) -> str:
+        """Extract text from PDF file"""
+        try:
+            with open(file_path, 'rb') as file:
+                reader = PyPDF2.PdfReader(file)
+                text = ""
+                for page in reader.pages:
+                    try:
+                        page_text = page.extract_text()
+                        if page_text:
+                            text += page_text + "\n"
+                    except Exception as page_error:
+                        print(f"Error reading page: {page_error}")
+                        continue
+                
+                if text.strip():
+                    return text
+                else:
+                    return "No text found in PDF - might be image-based"
+                    
+        except Exception as e:
+            return f"Error reading PDF: {str(e)}"
+    
+    def extract_text_from_docx(self, file_path: str) -> str:
+        """Extract text from DOCX file using docx2txt"""
+        try:
+            text = docx2txt.process(file_path)
+            if text and text.strip():
+                return text
+            else:
+                return "No readable text found in DOCX file"
+                
+        except Exception as e:
+            return f"Error reading DOCX: {str(e)}"
+    
+    def extract_text_from_txt(self, file_path: str) -> str:
+        """Extract text from TXT file"""
+        try:
+            with open(file_path, 'r', encoding='utf-8') as file:
+                return file.read()
+        except Exception as e:
+            return f"Error reading TXT: {str(e)}"
+    
+    def extract_text(self, file_path: str) -> str:
+        """Extract text based on file extension"""
+        _, ext = os.path.splitext(file_path.lower())
+        
+        if ext == '.pdf':
+            return self.extract_text_from_pdf(file_path)
+        elif ext == '.docx':
+            return self.extract_text_from_docx(file_path)
+        elif ext == '.txt':
+            return self.extract_text_from_txt(file_path)
+        else:
+            return "Unsupported file format"
+    
     def clean_and_tokenize(self, text: str) -> List[str]:
         """Clean text and extract meaningful tokens"""
         try:
@@ -53,7 +108,7 @@ class ResumeJDMatcher:
             print(f"Error in clean_and_tokenize: {e}")
             return []
     
-    def extract_phrases(self, text: str, max_phrase_length: int = 3) -> List[str]:
+    def extract_phrases(self, text: str) -> List[str]:
         """Extract both individual words and meaningful phrases"""
         try:
             words = self.clean_and_tokenize(text)
@@ -77,6 +132,64 @@ class ResumeJDMatcher:
             print(f"Error in extract_phrases: {e}")
             return []
     
+    def extract_experience(self, text: str) -> int:
+        """Extract years of experience from text with multiple patterns"""
+        patterns = [
+            r'(\d+)\+?\s*years?\s*(?:of\s*)?experience',
+            r'experience\s*(?:of\s*)?(\d+)\+?\s*years?',
+            r'(\d+)\+?\s*yrs?\s*(?:of\s*)?experience',
+            r'(\d+)\+?\s*years?\s*in',
+            r'(\d+)\+?\s*years?\s*working',
+            r'(\d+)\+?\s*years?\s*as',
+            r'(\d+)\+?\s*yrs?\s*in',
+            r'(\d+)\+?\s*year\s*experience',
+            r'total\s*(?:of\s*)?(\d+)\+?\s*years?',
+            r'over\s*(\d+)\+?\s*years?',
+            r'more\s*than\s*(\d+)\+?\s*years?',
+            r'(\d+)\+?\s*years?\s*of\s*professional',
+            r'(\d+)\+?\s*years?\s*of\s*industry',
+            r'(\d+)\+?\s*years?\s*of\s*work',
+            r'professional\s*experience\s*(?:of\s*)?(\d+)\+?\s*years?',
+        ]
+        
+        experience_years = []
+        text_lower = text.lower()
+        
+        # Extract years from patterns
+        for pattern in patterns:
+            matches = re.findall(pattern, text_lower)
+            if matches:
+                for match in matches:
+                    try:
+                        years = int(match)
+                        if 0 <= years <= 50:  # Reasonable range
+                            experience_years.append(years)
+                    except:
+                        continue
+        
+        # Calculate from date ranges
+        current_year = 2025
+        date_patterns = [
+            r'(\d{4})\s*-\s*(?:present|current|\d{4})',
+            r'(\d{4})\s*to\s*(?:present|current|\d{4})',
+            r'working\s*since\s*(\d{4})',
+            r'started\s*in\s*(\d{4})',
+        ]
+        
+        for pattern in date_patterns:
+            matches = re.findall(pattern, text_lower)
+            for match in matches:
+                try:
+                    start_year = int(match)
+                    if 1990 <= start_year <= current_year:
+                        calculated_years = current_year - start_year
+                        if calculated_years <= 50:
+                            experience_years.append(calculated_years)
+                except:
+                    continue
+        
+        return max(experience_years) if experience_years else 0
+    
     def extract_jd_requirements(self, jd_text: str) -> Dict[str, List[str]]:
         """Extract requirements from JD with scoring weights"""
         phrases = self.extract_phrases(jd_text)
@@ -91,20 +204,21 @@ class ResumeJDMatcher:
         tool_patterns = [
             'synopsys', 'cadence', 'mentor', 'verilog', 'systemverilog', 'vcs', 'questasim', 'modelsim',
             'design compiler', 'icc2', 'primetime', 'innovus', 'calibre', 'python', 'perl', 'tcl',
-            'matlab', 'xilinx', 'altera', 'vivado', 'quartus'
+            'matlab', 'xilinx', 'altera', 'vivado', 'quartus', 'eclipse', 'git', 'svn'
         ]
         
         # Technical skill patterns
         skill_patterns = [
             'rtl design', 'verification', 'uvm', 'functional verification', 'design verification',
             'testbench', 'coverage', 'assertion', 'debugging', 'simulation', 'synthesis',
-            'timing analysis', 'static timing', 'power analysis', 'dft', 'scan', 'bist'
+            'timing analysis', 'static timing', 'power analysis', 'dft', 'scan', 'bist', 'dv',
+            'digital design', 'analog design', 'mixed signal', 'low power', 'clock domain crossing'
         ]
         
         # Technology patterns
         tech_patterns = [
             'asic', 'fpga', 'soc', 'ip', 'axi', 'ahb', 'apb', 'pcie', 'usb', 'ddr', 'serdes',
-            'risc', 'arm', 'cpu', 'gpu', 'memory', 'cache', 'pipeline'
+            'risc', 'arm', 'cpu', 'gpu', 'memory', 'cache', 'pipeline', 'ethernet', 'uart', 'spi', 'i2c'
         ]
         
         for phrase in phrases:
@@ -134,7 +248,7 @@ class ResumeJDMatcher:
         """Extract all keywords/phrases from resume"""
         return self.extract_phrases(resume_text)
     
-    def calculate_string_match_score(self, resume_text: str, jd_text: str) -> Dict:
+    def calculate_match_score(self, resume_text: str, jd_text: str) -> Dict:
         """Calculate match score based on string matching"""
         try:
             # Basic validation
@@ -246,7 +360,7 @@ class ResumeJDMatcher:
             }
             
         except Exception as e:
-            print(f"Error in calculate_string_match_score: {e}")
+            print(f"Error in calculate_match_score: {e}")
             return {
                 'overall_score': 0,
                 'skill_score': 0,
@@ -260,341 +374,6 @@ class ResumeJDMatcher:
                 'total_jd_requirements': 0,
                 'total_matches': 0
             }
-    
-    def extract_text_from_pdf(self, file_path: str) -> str:
-        """Extract text from PDF file with multiple fallback methods"""
-        try:
-            # Primary method with PyPDF2
-            with open(file_path, 'rb') as file:
-                reader = PyPDF2.PdfReader(file)
-                text = ""
-                for page in reader.pages:
-                    try:
-                        page_text = page.extract_text()
-                        if page_text:
-                            text += page_text + "\n"
-                    except Exception as page_error:
-                        print(f"Error reading page: {page_error}")
-                        continue
-                
-                if text.strip():
-                    return text
-                else:
-                    return "No text found in PDF - might be image-based or encrypted"
-                    
-        except Exception as e1:
-            print(f"PyPDF2 extraction failed: {e1}")
-            
-            # Fallback: Try alternative PDF reading method
-            try:
-                # Simple byte-level text extraction for basic PDFs
-                with open(file_path, 'rb') as file:
-                    content = file.read()
-                    # Look for text streams in PDF
-                    import re
-                    text_pattern = re.compile(rb'BT\s*/F\d+\s+\d+\s+Tf\s+(.*?)ET', re.DOTALL)
-                    matches = text_pattern.findall(content)
-                    
-                    extracted_text = ""
-                    for match in matches:
-                        try:
-                            # Try to decode the text
-                            text_str = match.decode('utf-8', errors='ignore')
-                            extracted_text += text_str + " "
-                        except:
-                            continue
-                    
-                    if extracted_text.strip():
-                        return extracted_text
-                    else:
-                        return f"PDF appears to be image-based or encrypted. Try converting to text format. Error: {str(e1)}"
-                        
-            except Exception as e2:
-                return f"Could not read PDF file. Try converting to TXT format. Error: {str(e1)}"
-    
-    def extract_text_from_docx(self, file_path: str) -> str:
-        """Extract text from DOCX file using docx2txt (more robust)"""
-        try:
-            # Primary method: docx2txt (handles corrupt files better)
-            text = docx2txt.process(file_path)
-            if text and text.strip():
-                return text
-            else:
-                return "No readable text found in DOCX file"
-                
-        except Exception as e1:
-            print(f"docx2txt extraction failed: {e1}")
-            
-            # Fallback: Manual ZIP extraction
-            try:
-                import zipfile
-                import xml.etree.ElementTree as ET
-                
-                text_content = ""
-                with zipfile.ZipFile(file_path, 'r') as zip_file:
-                    try:
-                        # Read document.xml directly
-                        with zip_file.open('word/document.xml') as doc_xml:
-                            content = doc_xml.read().decode('utf-8', errors='ignore')
-                            
-                            # Extract text using regex patterns
-                            text_patterns = [
-                                r'<w:t[^>]*>([^<]+)</w:t>',  # Standard text
-                                r'<w:t>([^<]+)</w:t>',       # Simple text
-                                r'>([^<]{3,})<'             # Any text between tags
-                            ]
-                            
-                            for pattern in text_patterns:
-                                matches = re.findall(pattern, content)
-                                text_content += ' '.join(matches) + ' '
-                                
-                    except Exception as xml_error:
-                        print(f"XML extraction failed: {xml_error}")
-                        
-                        # Last resort: try any readable files in the ZIP
-                        for file_name in zip_file.namelist():
-                            if file_name.endswith(('.xml', '.rels')) and not file_name.startswith('word/media'):
-                                try:
-                                    with zip_file.open(file_name) as f:
-                                        content = f.read().decode('utf-8', errors='ignore')
-                                        # Extract any readable text
-                                        readable_text = re.findall(r'[a-zA-Z0-9\s]{10,}', content)
-                                        text_content += ' '.join(readable_text[:20])  # Limit to avoid noise
-                                except:
-                                    continue
-                
-                if text_content.strip():
-                    return text_content
-                else:
-                    return "DOCX file appears corrupted. Please convert to PDF or paste text directly."
-                    
-            except Exception as e2:
-                return "Could not read DOCX file. Please try PDF format or paste text directly."
-    
-    def extract_text_from_txt(self, file_path: str) -> str:
-        """Extract text from TXT file"""
-        try:
-            with open(file_path, 'r', encoding='utf-8') as file:
-                return file.read()
-        except Exception as e:
-            return f"Error reading TXT: {str(e)}"
-    
-    def extract_text(self, file_path: str) -> str:
-        """Extract text based on file extension"""
-        _, ext = os.path.splitext(file_path.lower())
-        
-        if ext == '.pdf':
-            return self.extract_text_from_pdf(file_path)
-        elif ext == '.docx':
-            return self.extract_text_from_docx(file_path)
-        elif ext == '.txt':
-            return self.extract_text_from_txt(file_path)
-        else:
-            return "Unsupported file format"
-    
-    def extract_experience(self, text: str) -> int:
-        """Extract years of experience from text with multiple patterns"""
-        patterns = [
-            # Standard patterns
-            r'(\d+)\+?\s*years?\s*(?:of\s*)?experience',
-            r'experience\s*(?:of\s*)?(\d+)\+?\s*years?',
-            r'(\d+)\+?\s*yrs?\s*(?:of\s*)?experience',
-            r'experience\s*(?:of\s*)?(\d+)\+?\s*yrs?',
-            
-            # Additional patterns for better detection
-            r'(\d+)\+?\s*years?\s*in',
-            r'(\d+)\+?\s*years?\s*working',
-            r'(\d+)\+?\s*years?\s*as',
-            r'(\d+)\+?\s*yrs?\s*in',
-            r'(\d+)\+?\s*year\s*experience',
-            r'total\s*(?:of\s*)?(\d+)\+?\s*years?',
-            r'over\s*(\d+)\+?\s*years?',
-            r'more\s*than\s*(\d+)\+?\s*years?',
-            r'(\d+)\+?\s*years?\s*of\s*professional',
-            r'(\d+)\+?\s*years?\s*of\s*industry',
-            r'(\d+)\+?\s*years?\s*of\s*work',
-            r'professional\s*experience\s*(?:of\s*)?(\d+)\+?\s*years?',
-            
-            # Date range patterns (calculate years)
-            r'(\d{4})\s*-\s*(?:present|current|\d{4})',
-            r'(\d{4})\s*to\s*(?:present|current|\d{4})',
-            
-            # Work history patterns
-            r'working\s*since\s*(\d{4})',
-            r'started\s*in\s*(\d{4})',
-        ]
-        
-        experience_years = []
-        text_lower = text.lower()
-        
-        # Extract years from patterns
-        for pattern in patterns[:13]:  # First 13 are direct year patterns
-            matches = re.findall(pattern, text_lower)
-            if matches:
-                for match in matches:
-                    try:
-                        years = int(match)
-                        if 0 <= years <= 50:  # Reasonable range
-                            experience_years.append(years)
-                    except:
-                        continue
-        
-        # Calculate from date ranges
-        current_year = 2025
-        date_patterns = patterns[13:]
-        for pattern in date_patterns:
-            matches = re.findall(pattern, text_lower)
-            for match in matches:
-                try:
-                    start_year = int(match)
-                    if 1990 <= start_year <= current_year:
-                        calculated_years = current_year - start_year
-                        if calculated_years <= 50:
-                            experience_years.append(calculated_years)
-                except:
-                    continue
-        
-        # Return the maximum experience found, or 0 if none
-        return max(experience_years) if experience_years else 0
-    
-    def extract_skills(self, text: str) -> Dict[str, List[str]]:
-        """Extract technical skills from text"""
-        found_skills = {}
-        text_lower = text.lower()
-        
-        for category, keywords in self.technical_keywords.items():
-            found_keywords = []
-            for keyword in keywords:
-                if keyword.lower() in text_lower:
-                    found_keywords.append(keyword)
-            if found_keywords:
-                found_skills[category] = found_keywords
-        
-        return found_skills
-    
-    def detect_domain_conflicts(self, resume_text: str, jd_text: str) -> Dict:
-        """Detect domain mismatches like Design vs Physical Design"""
-        conflicts = []
-        resume_lower = resume_text.lower()
-        jd_lower = jd_text.lower()
-        
-        for conflict_type, conflict_data in self.domain_conflicts.items():
-            design_in_resume = any(keyword in resume_lower for keyword in conflict_data['design_keywords'])
-            physical_in_resume = any(keyword in resume_lower for keyword in conflict_data['physical_keywords'])
-            
-            design_in_jd = any(keyword in jd_lower for keyword in conflict_data['design_keywords'])
-            physical_in_jd = any(keyword in jd_lower for keyword in conflict_data['physical_keywords'])
-            
-            # Critical mismatch detection
-            if (design_in_jd and physical_in_resume and not design_in_resume) or \
-               (physical_in_jd and design_in_resume and not physical_in_resume):
-                conflicts.append({
-                    'type': conflict_type,
-                    'message': conflict_data['conflict_message'],
-                    'jd_domain': 'design' if design_in_jd else 'physical',
-                    'resume_domain': 'design' if design_in_resume else 'physical'
-                })
-        
-        return conflicts
-    
-    def calculate_match_score(self, resume_text: str, jd_text: str) -> Dict:
-        """Calculate matching score between resume and JD with domain conflict detection"""
-        resume_skills = self.extract_skills(resume_text)
-        jd_skills = self.extract_skills(jd_text)
-        resume_exp = self.extract_experience(resume_text)
-        jd_exp = self.extract_experience(jd_text)
-        
-        # CRITICAL: Check for domain conflicts first
-        domain_conflicts = self.detect_domain_conflicts(resume_text, jd_text)
-        
-        # Calculate skill overlap
-        total_matches = 0
-        total_required = 0
-        detailed_matches = {}
-        missing_critical = []
-        
-        for category, jd_keywords in jd_skills.items():
-            resume_keywords = resume_skills.get(category, [])
-            matches = set(jd_keywords) & set(resume_keywords)
-            missing = list(set(jd_keywords) - matches)
-            
-            total_matches += len(matches)
-            total_required += len(jd_keywords)
-            
-            if matches or missing:
-                detailed_matches[category] = {
-                    'matched': list(matches),
-                    'missing': missing
-                }
-                
-            # Track critical missing skills
-            if category in ['vlsi', 'programming'] and missing:
-                missing_critical.extend(missing)
-        
-        # Calculate base scores
-        skill_score = (total_matches / total_required * 100) if total_required > 0 else 0
-        exp_score = min(resume_exp / jd_exp * 100, 100) if jd_exp > 0 else 100
-        overall_score = (skill_score * 0.7 + exp_score * 0.3)
-        
-        # Apply domain conflict penalties
-        conflict_penalty = 0
-        critical_issues = []
-        
-        if domain_conflicts:
-            conflict_penalty = 50  # Major penalty for domain mismatch
-            critical_issues = [conflict['message'] for conflict in domain_conflicts]
-            overall_score = max(0, overall_score - conflict_penalty)
-        
-        # Check for critical missing skills
-        if missing_critical and len(missing_critical) > 3:
-            critical_issues.append(f"Missing critical skills: {', '.join(missing_critical[:5])}")
-            overall_score = max(0, overall_score - 20)
-        
-        # Enhanced recommendation logic with more lenient scoring for good matches
-        if domain_conflicts:
-            recommendation = "DO NOT SEND"
-            status = "❌"
-            reason = f"Critical domain mismatch: {domain_conflicts[0]['message']}"
-        elif len(critical_issues) > 2:  # More than 2 critical issues
-            recommendation = "DO NOT SEND"
-            status = "❌"
-            reason = "Multiple critical missing skills"
-        elif overall_score >= 70:  # Lowered from 80
-            recommendation = "SEND"
-            status = "✅"
-            reason = "Strong match across skills and experience"
-        elif overall_score >= 50:  # Lowered from 65
-            recommendation = "MAYBE SEND"
-            status = "⚠️"
-            reason = "Moderate match, review specific requirements"
-        else:
-            recommendation = "DO NOT SEND"
-            status = "❌"
-            reason = "Insufficient match for role requirements"
-        
-        # Special case: If experience requirement is met and some core skills match, be more lenient
-        if resume_exp >= jd_exp and skill_score >= 40 and not domain_conflicts:
-            if recommendation == "DO NOT SEND":
-                recommendation = "MAYBE SEND"
-                status = "⚠️"
-                reason = "Experience requirement met, some skill gaps exist"
-        
-        return {
-            'overall_score': round(overall_score, 1),
-            'skill_score': round(skill_score, 1),
-            'experience_score': round(exp_score, 1),
-            'recommendation': recommendation,
-            'status': status,
-            'reason': reason,
-            'resume_experience': resume_exp,
-            'required_experience': jd_exp,
-            'detailed_matches': detailed_matches,
-            'resume_skills': resume_skills,
-            'jd_skills': jd_skills,
-            'domain_conflicts': domain_conflicts,
-            'critical_issues': critical_issues,
-            'conflict_penalty': conflict_penalty
-        }
 
 # Initialize matcher
 matcher = ResumeJDMatcher()
@@ -658,6 +437,7 @@ def index():
             border: 1px solid #ddd;
             border-radius: 4px;
             resize: vertical;
+            font-family: Arial, sans-serif;
         }
         button {
             background-color: #3498db;
@@ -724,36 +504,37 @@ def index():
             background: #f8f9fa;
             border-radius: 8px;
         }
+        .file-tip {
+            background: #e8f4f8;
+            padding: 15px;
+            border-radius: 5px;
+            margin: 15px 0;
+            border-left: 4px solid #3498db;
+        }
     </style>
 </head>
 <body>
-            <div class="container">
+    <div class="container">
         <h1>🎯 Resume-JD Matcher</h1>
         
         <div class="file-tip">
-            <strong>📁 File Upload Tips:</strong>
-            <ul style="margin: 5px 0; padding-left: 20px;">
-                <li>If DOCX files fail to upload, try saving as PDF first</li>
-                <li>For best results, copy-paste text directly into the text areas</li>
-                <li>Supported formats: PDF, DOCX, TXT</li>
-            </ul>
+            <strong>📝 Text-Based Matching:</strong> This tool analyzes text content to match resumes with job descriptions. 
+            Simply paste the resume and job description text in the boxes below for accurate matching.
         </div>
         
-        <form id="matchForm" enctype="multipart/form-data">
+        <form id="matchForm">
             <div class="upload-section">
                 <div class="upload-box">
                     <h3>📄 Resume</h3>
                     <input type="file" id="resume" name="resume" accept=".pdf,.docx,.txt">
-                    <p>Supported formats: PDF, DOCX, TXT</p>
-                    <p><small><strong>Having file issues?</strong> Try copy-pasting the text instead!</small></p>
+                    <p>Or paste text:</p>
                     <textarea id="resumeText" name="resumeText" placeholder="Paste resume content here..."></textarea>
                 </div>
                 
                 <div class="upload-box">
                     <h3>📋 Job Description</h3>
                     <input type="file" id="jd" name="jd" accept=".pdf,.docx,.txt">
-                    <p>Supported formats: PDF, DOCX, TXT</p>
-                    <p><small><strong>Having file issues?</strong> Try copy-pasting the text instead!</small></p>
+                    <p>Or paste text:</p>
                     <textarea id="jdText" name="jdText" placeholder="Paste job description here..."></textarea>
                 </div>
             </div>
@@ -804,51 +585,122 @@ def index():
                     body: formData
                 });
                 
+                if (!response.ok) {
+                    const errorText = await response.text();
+                    throw new Error(`Server error (${response.status}): ${errorText}`);
+                }
+                
                 const data = await response.json();
                 
+                console.log('Received data:', data);
+                
                 if (data.error) {
-                    alert('Error: ' + data.error);
+                    let errorMsg = 'Analysis Error: ' + data.error;
+                    if (data.suggestion) {
+                        errorMsg += '\\n\\nSuggestion: ' + data.suggestion;
+                    }
+                    alert(errorMsg);
                     return;
                 }
                 
+                // Ensure all required properties exist with defaults
+                const safeData = {
+                    overall_score: Number(data.overall_score) || 0,
+                    skill_score: Number(data.skill_score) || 0,
+                    experience_score: Number(data.experience_score) || 0,
+                    recommendation: String(data.recommendation || 'ERROR'),
+                    status: String(data.status || '❌'),
+                    reason: String(data.reason || 'Unknown error'),
+                    resume_experience: Number(data.resume_experience) || 0,
+                    required_experience: Number(data.required_experience) || 0,
+                    category_breakdown: data.category_breakdown || {},
+                    total_matches: Number(data.total_matches) || 0,
+                    total_jd_requirements: Number(data.total_jd_requirements) || 0
+                };
+                
+                // Validate data ranges
+                safeData.overall_score = Math.max(0, Math.min(100, safeData.overall_score));
+                safeData.skill_score = Math.max(0, Math.min(100, safeData.skill_score));
+                safeData.experience_score = Math.max(0, Math.min(100, safeData.experience_score));
+                
                 // Update results
                 document.getElementById('recommendation').textContent = 
-                    data.status + ' ' + data.recommendation;
-                document.getElementById('overallScore').textContent = data.overall_score + '%';
-                document.getElementById('skillScore').textContent = data.skill_score + '%';
-                document.getElementById('expScore').textContent = data.experience_score + '%';
+                    safeData.status + ' ' + safeData.recommendation;
+                document.getElementById('overallScore').textContent = safeData.overall_score.toFixed(1) + '%';
+                document.getElementById('skillScore').textContent = safeData.skill_score.toFixed(1) + '%';
+                document.getElementById('expScore').textContent = safeData.experience_score.toFixed(1) + '%';
                 
                 // Set result styling
                 results.className = 'results';
-                if (data.recommendation === 'SEND') {
-                    results.classList.add('send');
-                } else if (data.recommendation === 'MAYBE SEND') {
-                    results.classList.add('maybe');
+                if (safeData.recommendation.includes('SEND') && !safeData.recommendation.includes('NOT')) {
+                    if (safeData.recommendation.includes('MAYBE')) {
+                        results.classList.add('maybe');
+                    } else {
+                        results.classList.add('send');
+                    }
                 } else {
                     results.classList.add('reject');
                 }
                 
-                // Update details
+                // Build details HTML
                 let detailsHtml = '<h3>Analysis Details:</h3>';
-                detailsHtml += `<p><strong>Experience:</strong> Candidate has ${data.resume_experience} years, Required: ${data.required_experience} years</p>`;
+                detailsHtml += `<p><strong>Recommendation Reason:</strong> ${safeData.reason}</p>`;
+                detailsHtml += `<p><strong>Experience:</strong> Candidate has ${safeData.resume_experience} years, Required: ${safeData.required_experience} years</p>`;
                 
-                if (Object.keys(data.detailed_matches).length > 0) {
-                    detailsHtml += '<h4>Skill Matches:</h4>';
-                    for (const [category, matches] of Object.entries(data.detailed_matches)) {
-                        detailsHtml += `<p><strong>${category}:</strong> `;
-                        detailsHtml += `✅ ${matches.matched.join(', ')}`;
-                        if (matches.missing.length > 0) {
-                            detailsHtml += ` | ❌ Missing: ${matches.missing.join(', ')}`;
+                // Show category breakdown
+                try {
+                    if (safeData.category_breakdown && typeof safeData.category_breakdown === 'object') {
+                        const categories = Object.keys(safeData.category_breakdown);
+                        if (categories.length > 0) {
+                            detailsHtml += '<h4>📊 Category Breakdown:</h4>';
+                            categories.forEach(category => {
+                                const breakdown = safeData.category_breakdown[category];
+                                if (breakdown && typeof breakdown === 'object') {
+                                    const categoryName = category.replace(/_/g, ' ').toUpperCase();
+                                    const weight = Number(breakdown.weight) || 1;
+                                    const score = Number(breakdown.score) || 0;
+                                    const totalReqs = Number(breakdown.total_requirements) || 0;
+                                    const matches = Array.isArray(breakdown.matches) ? breakdown.matches : [];
+                                    const missing = Array.isArray(breakdown.missing) ? breakdown.missing : [];
+                                    
+                                    detailsHtml += `<div style="margin: 10px 0; padding: 10px; background: #f8f9fa; border-radius: 5px;">`;
+                                    detailsHtml += `<strong>${categoryName}</strong> (Weight: ${weight}x) - Score: ${score.toFixed(1)}%<br>`;
+                                    detailsHtml += `<small>Requirements: ${totalReqs} | Matched: ${matches.length}</small><br>`;
+                                    
+                                    if (matches.length > 0) {
+                                        const displayMatches = matches.slice(0, 5);
+                                        detailsHtml += `✅ <span style="color: green;">Matched:</span> ${displayMatches.join(', ')}`;
+                                        if (matches.length > 5) detailsHtml += ` +${matches.length - 5} more`;
+                                        detailsHtml += '<br>';
+                                    }
+                                    
+                                    if (missing.length > 0) {
+                                        const displayMissing = missing.slice(0, 5);
+                                        detailsHtml += `❌ <span style="color: red;">Missing:</span> ${displayMissing.join(', ')}`;
+                                        if (missing.length > 5) detailsHtml += ` +${missing.length - 5} more`;
+                                    }
+                                    detailsHtml += '</div>';
+                                }
+                            });
+                            
+                            detailsHtml += `<p><strong>Summary:</strong> ${safeData.total_matches}/${safeData.total_jd_requirements} total requirements matched</p>`;
+                        } else {
+                            detailsHtml += '<p>No categories found in analysis.</p>';
                         }
-                        detailsHtml += '</p>';
+                    } else {
+                        detailsHtml += '<p>No detailed breakdown available.</p>';
                     }
+                } catch (breakdownError) {
+                    console.error('Error building breakdown:', breakdownError);
+                    detailsHtml += '<p>Error displaying detailed breakdown. Check console for details.</p>';
                 }
                 
                 document.getElementById('details').innerHTML = detailsHtml;
                 results.style.display = 'block';
                 
             } catch (error) {
-                alert('Error analyzing match: ' + error.message);
+                console.error('Complete error details:', error);
+                alert(`Analysis failed: ${error.message}\\n\\nPlease check that both resume and job description text are provided.`);
             } finally {
                 loading.style.display = 'none';
             }
@@ -864,84 +716,60 @@ def analyze():
         resume_text = ""
         jd_text = ""
         
-        # Handle resume input with enhanced validation
+        # Handle resume input
         if 'resume' in request.files and request.files['resume'].filename:
             resume_file = request.files['resume']
-            if resume_file.filename.strip() == '':
-                return jsonify({'error': 'Resume file is empty'})
             filename = secure_filename(resume_file.filename)
             resume_path = os.path.join(app.config['UPLOAD_FOLDER'], filename)
             resume_file.save(resume_path)
             resume_text = matcher.extract_text(resume_path)
             os.remove(resume_path)  # Clean up
             
-            # Check if extraction failed or returned an error message
-            if not resume_text or resume_text.startswith('Error') or resume_text.startswith('Could not'):
+            # Check if extraction failed
+            if resume_text.startswith('Error') or resume_text.startswith('No'):
                 return jsonify({
                     'error': f'File processing issue: {resume_text}',
-                    'suggestion': 'Try uploading the file in a different format (PDF → TXT, or DOCX → PDF), or copy-paste the text directly into the text area.'
-                })
-            
-            # Check if extracted text is meaningful
-            if len(resume_text.strip()) < 50:
-                return jsonify({
-                    'error': 'Very little text extracted from file. The file might be corrupted, image-based, or empty.',
-                    'suggestion': 'Try copy-pasting the resume text directly into the text area below the file upload.'
+                    'suggestion': 'Try copy-pasting the text directly into the text area.'
                 })
                 
         elif request.form.get('resumeText'):
             resume_text = request.form.get('resumeText').strip()
         
-        # Handle JD input with enhanced validation
+        # Handle JD input
         if 'jd' in request.files and request.files['jd'].filename:
             jd_file = request.files['jd']
-            if jd_file.filename.strip() == '':
-                return jsonify({'error': 'Job description file is empty'})
             filename = secure_filename(jd_file.filename)
             jd_path = os.path.join(app.config['UPLOAD_FOLDER'], filename)
             jd_file.save(jd_path)
             jd_text = matcher.extract_text(jd_path)
             os.remove(jd_path)  # Clean up
             
-            if not jd_text or jd_text.startswith('Error') or jd_text.startswith('Could not'):
+            if jd_text.startswith('Error') or jd_text.startswith('No'):
                 return jsonify({
                     'error': f'JD file processing issue: {jd_text}',
-                    'suggestion': 'Try uploading the JD in a different format or copy-paste the text directly.'
-                })
-                
-            if len(jd_text.strip()) < 20:
-                return jsonify({
-                    'error': 'Very little text extracted from JD file.',
-                    'suggestion': 'Try copy-pasting the job description text directly.'
+                    'suggestion': 'Try copy-pasting the text directly.'
                 })
                 
         elif request.form.get('jdText'):
             jd_text = request.form.get('jdText').strip()
         
-        # Final validation
-        if not resume_text or len(resume_text.strip()) < 10:
-            return jsonify({'error': 'Please provide a valid resume (at least 10 characters)'})
+        # Validation
+        if not resume_text or len(resume_text) < 10:
+            return jsonify({'error': 'Please provide resume text (at least 10 characters)'})
         
-        if not jd_text or len(jd_text.strip()) < 10:
-            return jsonify({'error': 'Please provide a valid job description (at least 10 characters)'})
+        if not jd_text or len(jd_text) < 10:
+            return jsonify({'error': 'Please provide job description text (at least 10 characters)'})
         
-        # Analyze match using string-based approach
-        results = matcher.calculate_string_match_score(resume_text, jd_text)
+        # Analyze match
+        results = matcher.calculate_match_score(resume_text, jd_text)
         
-        # Validate results before sending
+        # Validate results
         if not isinstance(results, dict):
             return jsonify({'error': 'Analysis failed - invalid results format'})
-        
-        # Ensure all required fields exist
-        required_fields = ['overall_score', 'skill_score', 'experience_score', 'recommendation', 'status', 'reason']
-        for field in required_fields:
-            if field not in results:
-                results[field] = 0 if 'score' in field else 'ERROR'
         
         return jsonify(results)
         
     except Exception as e:
-        # Log the error for debugging
         print(f"Error in analyze endpoint: {str(e)}")
         import traceback
         traceback.print_exc()
@@ -956,46 +784,6 @@ def analyze():
             'reason': 'Analysis failed due to server error'
         })
 
-@app.route('/debug', methods=['POST'])
-def debug_analysis():
-    """Debug endpoint to see detailed extraction"""
-    try:
-        data = request.get_json()
-        
-        if not data or 'text' not in data:
-            return jsonify({'error': 'Please provide text in JSON format'})
-        
-        text = data['text']
-        
-        # Extract and return all details
-        experience = matcher.extract_experience(text)
-        skills = matcher.extract_skills(text)
-        
-        # Show regex matches for experience
-        exp_matches = []
-        patterns = [
-            r'(\d+)\+?\s*years?\s*(?:of\s*)?experience',
-            r'experience\s*(?:of\s*)?(\d+)\+?\s*years?',
-            r'(\d+)\+?\s*yrs?\s*(?:of\s*)?experience',
-            r'(\d+)\+?\s*years?\s*in',
-            r'(\d+)\+?\s*years?\s*working'
-        ]
-        
-        for pattern in patterns:
-            matches = re.findall(pattern, text.lower())
-            if matches:
-                exp_matches.append({'pattern': pattern, 'matches': matches})
-        
-        return jsonify({
-            'extracted_experience': experience,
-            'extracted_skills': skills,
-            'experience_regex_matches': exp_matches,
-            'text_preview': text[:500] + '...' if len(text) > 500 else text
-        })
-        
-    except Exception as e:
-        return jsonify({'error': str(e)})
-
 @app.route('/api/analyze', methods=['POST'])
 def api_analyze():
     """API endpoint for programmatic access"""
@@ -1005,13 +793,12 @@ def api_analyze():
         if not data or 'resume' not in data or 'jd' not in data:
             return jsonify({'error': 'Please provide both resume and jd in JSON format'})
         
-        results = matcher.calculate_string_match_score(data['resume'], data['jd'])
+        results = matcher.calculate_match_score(data['resume'], data['jd'])
         return jsonify(results)
         
     except Exception as e:
         return jsonify({'error': str(e)})
 
-# Railway deployment optimization
 if __name__ == '__main__':
     port = int(os.environ.get('PORT', 5000))
     app.run(host='0.0.0.0', port=port, debug=False)
