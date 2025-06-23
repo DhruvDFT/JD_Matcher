@@ -12,37 +12,41 @@ app.config['UPLOAD_FOLDER'] = 'uploads'
 # Create uploads directory
 os.makedirs('uploads', exist_ok=True)
 
-class ResumeJDMatcher:
+class DomainMatcher:
     def __init__(self):
-        # Stop words to ignore during matching
-        self.stop_words = {
-            'the', 'and', 'or', 'but', 'in', 'on', 'at', 'to', 'for', 'of', 'with', 'by', 'is', 'are', 'was', 'were',
-            'be', 'been', 'being', 'have', 'has', 'had', 'do', 'does', 'did', 'will', 'would', 'could', 'should',
-            'may', 'might', 'must', 'can', 'shall', 'a', 'an', 'this', 'that', 'these', 'those', 'i', 'you', 'he',
-            'she', 'it', 'we', 'they', 'me', 'him', 'her', 'us', 'them', 'my', 'your', 'his', 'her', 'its', 'our',
-            'their', 'experience', 'skills', 'knowledge', 'ability', 'candidate', 'required', 'must', 'should',
-            'preferred', 'plus', 'good', 'excellent', 'strong', 'solid', 'proven', 'demonstrated'
-        }
-        
-        # Weight different types of keywords
-        self.keyword_weights = {
-            'technical_tools': 3.0,    # Tools like "Synopsys", "Verilog"
-            'technical_skills': 2.5,   # Skills like "RTL Design", "UVM"
-            'technologies': 2.0,       # Technologies like "ASIC", "FPGA" 
-            'general_skills': 1.0      # General terms
-        }
-        
-        # Domain conflict detection - Critical for accurate matching
-        self.domain_conflicts = {
-            'vlsi_design_vs_physical': {
-                'design_keywords': ['rtl design', 'verilog', 'systemverilog', 'design compiler', 'uvm', 'verification', 'testbench', 'dv', 'design verification', 'functional verification', 'coverage', 'assertion', 'debugging simulation'],
-                'physical_keywords': ['place and route', 'pnr', 'physical design', 'icc2', 'innovus', 'floorplan', 'timing closure', 'sta', 'primetime', 'floor planning', 'routing', 'placement'],
-                'conflict_message': 'VLSI Design/Verification (Frontend) vs Physical Design (Backend Implementation)'
+        # Define clear domain patterns
+        self.domains = {
+            'design_verification': {
+                'name': 'Design Verification (DV)',
+                'keywords': [
+                    'design verification', 'dv engineer', 'verification engineer', 'functional verification',
+                    'uvm', 'testbench', 'coverage', 'assertion', 'constrained random', 'verification methodology',
+                    'simulation', 'debugging', 'verification plan', 'test cases', 'coverage analysis',
+                    'formal verification', 'lint', 'cdc', 'equivalence checking', 'verification ip',
+                    'systemverilog', 'verilog', 'verification', 'rtl verification', 'block level verification',
+                    'chip level verification', 'regression', 'test harness'
+                ]
             },
-            'frontend_vs_backend': {
-                'design_keywords': ['react', 'angular', 'vue', 'html', 'css', 'javascript', 'ui/ux', 'frontend'],
-                'physical_keywords': ['node.js', 'python', 'java', 'database', 'api', 'server', 'backend'],
-                'conflict_message': 'Frontend Development vs Backend Development'
+            'physical_design': {
+                'name': 'Physical Design (PD)',
+                'keywords': [
+                    'physical design', 'pd engineer', 'backend engineer', 'place and route', 'pnr',
+                    'floorplan', 'floor planning', 'placement', 'routing', 'timing closure', 'sta',
+                    'static timing analysis', 'icc2', 'innovus', 'primetime', 'timing constraints',
+                    'power analysis', 'ir drop', 'signal integrity', 'cts', 'clock tree synthesis',
+                    'post layout', 'parasitic extraction', 'physical verification', 'drc', 'lvs',
+                    'antenna check', 'fill insertion', 'eco', 'metal layer', 'via optimization'
+                ]
+            },
+            'rtl_design': {
+                'name': 'RTL Design',
+                'keywords': [
+                    'rtl design', 'rtl engineer', 'design engineer', 'logic design', 'digital design',
+                    'verilog', 'systemverilog', 'hdl', 'synthesis', 'design compiler', 'rtl coding',
+                    'microarchitecture', 'architecture design', 'functional specification', 'design specification',
+                    'rtl implementation', 'ip design', 'module design', 'interface design',
+                    'protocol implementation', 'datapath design', 'control logic', 'state machine'
+                ]
             }
         }
     
@@ -57,27 +61,17 @@ class ResumeJDMatcher:
                         page_text = page.extract_text()
                         if page_text:
                             text += page_text + "\n"
-                    except Exception as page_error:
-                        print(f"Error reading page: {page_error}")
+                    except Exception:
                         continue
-                
-                if text.strip():
-                    return text
-                else:
-                    return "No text found in PDF - might be image-based"
-                    
+                return text if text.strip() else "No text found in PDF"
         except Exception as e:
             return f"Error reading PDF: {str(e)}"
     
     def extract_text_from_docx(self, file_path: str) -> str:
-        """Extract text from DOCX file using docx2txt"""
+        """Extract text from DOCX file"""
         try:
             text = docx2txt.process(file_path)
-            if text and text.strip():
-                return text
-            else:
-                return "No readable text found in DOCX file"
-                
+            return text if text and text.strip() else "No readable text found in DOCX file"
         except Exception as e:
             return f"Error reading DOCX: {str(e)}"
     
@@ -88,36 +82,6 @@ class ResumeJDMatcher:
                 return file.read()
         except Exception as e:
             return f"Error reading TXT: {str(e)}"
-    
-    def detect_domain_conflicts(self, resume_text: str, jd_text: str) -> List[Dict]:
-        """Detect domain mismatches like DV vs PD"""
-        conflicts = []
-        resume_lower = resume_text.lower()
-        jd_lower = jd_text.lower()
-        
-        for conflict_type, conflict_data in self.domain_conflicts.items():
-            design_in_resume = any(keyword in resume_lower for keyword in conflict_data['design_keywords'])
-            physical_in_resume = any(keyword in resume_lower for keyword in conflict_data['physical_keywords'])
-            
-            design_in_jd = any(keyword in jd_lower for keyword in conflict_data['design_keywords'])
-            physical_in_jd = any(keyword in jd_lower for keyword in conflict_data['physical_keywords'])
-            
-            # Critical mismatch detection
-            if (design_in_jd and physical_in_resume and not design_in_resume) or \
-               (physical_in_jd and design_in_resume and not physical_in_resume):
-                
-                jd_domain = 'Design/Verification' if design_in_jd else 'Physical Design'
-                resume_domain = 'Design/Verification' if design_in_resume else 'Physical Design'
-                
-                conflicts.append({
-                    'type': conflict_type,
-                    'message': conflict_data['conflict_message'],
-                    'jd_domain': jd_domain,
-                    'resume_domain': resume_domain,
-                    'details': f"JD requires {jd_domain} but resume shows {resume_domain} experience"
-                })
-        
-        return conflicts
     
     def extract_text(self, file_path: str) -> str:
         """Extract text based on file extension"""
@@ -132,308 +96,83 @@ class ResumeJDMatcher:
         else:
             return "Unsupported file format"
     
-    def clean_and_tokenize(self, text: str) -> List[str]:
-        """Clean text and extract meaningful tokens"""
-        try:
-            # Convert to lowercase and remove extra whitespace
-            text = re.sub(r'\s+', ' ', text.lower().strip())
-            
-            # Remove special characters but keep alphanumeric and spaces
-            text = re.sub(r'[^\w\s\+\-\.]', ' ', text)
-            
-            # Split into words
-            words = text.split()
-            
-            # Remove stop words and very short words
-            meaningful_words = [word for word in words if word not in self.stop_words and len(word) > 2]
-            
-            return meaningful_words
-        except Exception as e:
-            print(f"Error in clean_and_tokenize: {e}")
-            return []
-    
-    def extract_phrases(self, text: str) -> List[str]:
-        """Extract both individual words and meaningful phrases"""
-        try:
-            words = self.clean_and_tokenize(text)
-            phrases = []
-            
-            # Add individual words
-            phrases.extend(words)
-            
-            # Add 2-word phrases
-            for i in range(len(words) - 1):
-                phrase = f"{words[i]} {words[i+1]}"
-                phrases.append(phrase)
-            
-            # Add 3-word phrases 
-            for i in range(len(words) - 2):
-                phrase = f"{words[i]} {words[i+1]} {words[i+2]}"
-                phrases.append(phrase)
-            
-            return phrases
-        except Exception as e:
-            print(f"Error in extract_phrases: {e}")
-            return []
-    
-    def extract_experience(self, text: str) -> int:
-        """Extract years of experience from text with multiple patterns"""
-        patterns = [
-            r'(\d+)\+?\s*years?\s*(?:of\s*)?experience',
-            r'experience\s*(?:of\s*)?(\d+)\+?\s*years?',
-            r'(\d+)\+?\s*yrs?\s*(?:of\s*)?experience',
-            r'(\d+)\+?\s*years?\s*in',
-            r'(\d+)\+?\s*years?\s*working',
-            r'(\d+)\+?\s*years?\s*as',
-            r'(\d+)\+?\s*yrs?\s*in',
-            r'(\d+)\+?\s*year\s*experience',
-            r'total\s*(?:of\s*)?(\d+)\+?\s*years?',
-            r'over\s*(\d+)\+?\s*years?',
-            r'more\s*than\s*(\d+)\+?\s*years?',
-            r'(\d+)\+?\s*years?\s*of\s*professional',
-            r'(\d+)\+?\s*years?\s*of\s*industry',
-            r'(\d+)\+?\s*years?\s*of\s*work',
-            r'professional\s*experience\s*(?:of\s*)?(\d+)\+?\s*years?',
-        ]
-        
-        experience_years = []
+    def detect_domain(self, text: str) -> Dict:
+        """Detect the primary domain of a text"""
         text_lower = text.lower()
+        domain_scores = {}
+        matched_keywords = {}
         
-        # Extract years from patterns
-        for pattern in patterns:
-            matches = re.findall(pattern, text_lower)
-            if matches:
-                for match in matches:
-                    try:
-                        years = int(match)
-                        if 0 <= years <= 50:  # Reasonable range
-                            experience_years.append(years)
-                    except:
-                        continue
-        
-        # Calculate from date ranges
-        current_year = 2025
-        date_patterns = [
-            r'(\d{4})\s*-\s*(?:present|current|\d{4})',
-            r'(\d{4})\s*to\s*(?:present|current|\d{4})',
-            r'working\s*since\s*(\d{4})',
-            r'started\s*in\s*(\d{4})',
-        ]
-        
-        for pattern in date_patterns:
-            matches = re.findall(pattern, text_lower)
-            for match in matches:
-                try:
-                    start_year = int(match)
-                    if 1990 <= start_year <= current_year:
-                        calculated_years = current_year - start_year
-                        if calculated_years <= 50:
-                            experience_years.append(calculated_years)
-                except:
-                    continue
-        
-        return max(experience_years) if experience_years else 0
-    
-    def extract_jd_requirements(self, jd_text: str) -> Dict[str, List[str]]:
-        """Extract requirements from JD with scoring weights"""
-        phrases = self.extract_phrases(jd_text)
-        
-        # Categorize keywords by type for different weights
-        technical_tools = []
-        technical_skills = []
-        technologies = []
-        general_skills = []
-        
-        # Technical tool patterns
-        tool_patterns = [
-            'synopsys', 'cadence', 'mentor', 'verilog', 'systemverilog', 'vcs', 'questasim', 'modelsim',
-            'design compiler', 'icc2', 'primetime', 'innovus', 'calibre', 'python', 'perl', 'tcl',
-            'matlab', 'xilinx', 'altera', 'vivado', 'quartus', 'eclipse', 'git', 'svn'
-        ]
-        
-        # Technical skill patterns
-        skill_patterns = [
-            'rtl design', 'verification', 'uvm', 'functional verification', 'design verification',
-            'testbench', 'coverage', 'assertion', 'debugging', 'simulation', 'synthesis',
-            'timing analysis', 'static timing', 'power analysis', 'dft', 'scan', 'bist', 'dv',
-            'digital design', 'analog design', 'mixed signal', 'low power', 'clock domain crossing'
-        ]
-        
-        # Technology patterns
-        tech_patterns = [
-            'asic', 'fpga', 'soc', 'ip', 'axi', 'ahb', 'apb', 'pcie', 'usb', 'ddr', 'serdes',
-            'risc', 'arm', 'cpu', 'gpu', 'memory', 'cache', 'pipeline', 'ethernet', 'uart', 'spi', 'i2c'
-        ]
-        
-        for phrase in phrases:
-            phrase_lower = phrase.lower()
+        for domain_key, domain_info in self.domains.items():
+            score = 0
+            matches = []
             
-            # Check if it's a technical tool
-            if any(tool in phrase_lower for tool in tool_patterns):
-                technical_tools.append(phrase)
-            # Check if it's a technical skill
-            elif any(skill in phrase_lower for skill in skill_patterns):
-                technical_skills.append(phrase)
-            # Check if it's a technology
-            elif any(tech in phrase_lower for tech in tech_patterns):
-                technologies.append(phrase)
-            # Everything else is general
-            else:
-                general_skills.append(phrase)
+            for keyword in domain_info['keywords']:
+                if keyword in text_lower:
+                    score += 1
+                    matches.append(keyword)
+            
+            domain_scores[domain_key] = score
+            matched_keywords[domain_key] = matches
+        
+        # Find the domain with highest score
+        if not any(domain_scores.values()):
+            return {
+                'primary_domain': 'unknown',
+                'domain_name': 'Unknown/Other',
+                'confidence': 0,
+                'all_scores': domain_scores,
+                'matched_keywords': matched_keywords
+            }
+        
+        primary_domain = max(domain_scores, key=domain_scores.get)
+        max_score = domain_scores[primary_domain]
+        total_possible = len(self.domains[primary_domain]['keywords'])
+        confidence = (max_score / total_possible) * 100
         
         return {
-            'technical_tools': list(set(technical_tools)),
-            'technical_skills': list(set(technical_skills)),
-            'technologies': list(set(technologies)),
-            'general_skills': list(set(general_skills))
+            'primary_domain': primary_domain,
+            'domain_name': self.domains[primary_domain]['name'],
+            'confidence': round(confidence, 1),
+            'score': max_score,
+            'total_keywords': total_possible,
+            'all_scores': domain_scores,
+            'matched_keywords': matched_keywords
         }
     
-    def extract_resume_keywords(self, resume_text: str) -> List[str]:
-        """Extract all keywords/phrases from resume"""
-        return self.extract_phrases(resume_text)
-    
-    def calculate_match_score(self, resume_text: str, jd_text: str) -> Dict:
-        """Calculate match score based on string matching"""
-        try:
-            # Basic validation
-            if not resume_text or not jd_text:
-                return {
-                    'overall_score': 0,
-                    'skill_score': 0,
-                    'experience_score': 0,
-                    'recommendation': 'DO NOT SEND',
-                    'status': '❌',
-                    'reason': 'Missing resume or job description text',
-                    'resume_experience': 0,
-                    'required_experience': 0,
-                    'category_breakdown': {},
-                    'total_jd_requirements': 0,
-                    'total_matches': 0
-                }
-            
-            # CRITICAL: Check for domain conflicts first
-            domain_conflicts = self.detect_domain_conflicts(resume_text, jd_text)
-            
-            # Extract requirements from JD
-            jd_requirements = self.extract_jd_requirements(jd_text)
-            
-            # Extract keywords from resume
-            resume_keywords = self.extract_resume_keywords(resume_text)
-            resume_keywords_lower = [kw.lower() for kw in resume_keywords]
-            
-            # Calculate matches for each category
-            category_scores = {}
-            total_weighted_score = 0
-            total_possible_score = 0
-            
-            for category, requirements in jd_requirements.items():
-                if not requirements:  # Skip empty categories
-                    continue
-                    
-                weight = self.keyword_weights.get(category, 1.0)
-                matches = []
-                missing = []
-                
-                for req in requirements:
-                    req_lower = req.lower()
-                    # Check for exact match or partial match
-                    if req_lower in resume_keywords_lower:
-                        matches.append(req)
-                    elif any(req_lower in resume_kw for resume_kw in resume_keywords_lower):
-                        matches.append(req)
-                    elif any(resume_kw in req_lower for resume_kw in resume_keywords_lower if len(resume_kw) > 3):
-                        matches.append(req)
-                    else:
-                        missing.append(req)
-                
-                # Calculate category score
-                category_match_rate = len(matches) / len(requirements) if requirements else 0
-                category_score = category_match_rate * 100
-                weighted_score = category_score * weight
-                
-                category_scores[category] = {
-                    'score': round(category_score, 1),
-                    'weight': weight,
-                    'weighted_score': round(weighted_score, 1),
-                    'matches': matches,
-                    'missing': missing,
-                    'total_requirements': len(requirements)
-                }
-                
-                total_weighted_score += weighted_score
-                total_possible_score += 100 * weight
-            
-            # Calculate overall score
-            overall_score = (total_weighted_score / total_possible_score * 100) if total_possible_score > 0 else 0
-            
-            # Extract experience
-            resume_exp = self.extract_experience(resume_text)
-            jd_exp = self.extract_experience(jd_text)
-            exp_score = min(resume_exp / jd_exp * 100, 100) if jd_exp > 0 else 100
-            
-            # Final combined score (80% skills, 20% experience)
-            final_score = (overall_score * 0.8) + (exp_score * 0.2)
-            
-            # Apply domain conflict penalties - CRITICAL FOR ACCURACY
-            if domain_conflicts:
-                final_score = max(0, final_score - 60)  # Major penalty for domain mismatch
-            
-            # Determine recommendation based on final score and conflicts
-            if domain_conflicts:
-                recommendation = "DO NOT SEND"
-                status = "❌"
-                reason = f"CRITICAL: {domain_conflicts[0]['details']}"
-            elif final_score >= 75:
-                recommendation = "SEND"
-                status = "✅"
-                reason = "Strong keyword match with requirements"
-            elif final_score >= 60:
-                recommendation = "MAYBE SEND" 
-                status = "⚠️"
-                reason = "Moderate match, review specific gaps"
-            elif final_score >= 45:
-                recommendation = "MAYBE SEND"
-                status = "⚠️" 
-                reason = "Some important keywords missing, but potential fit"
-            else:
-                recommendation = "DO NOT SEND"
-                status = "❌"
-                reason = "Insufficient keyword match with requirements"
-            
-            return {
-                'overall_score': round(final_score, 1),
-                'skill_score': round(overall_score, 1),
-                'experience_score': round(exp_score, 1),
-                'recommendation': recommendation,
-                'status': status,
-                'reason': reason,
-                'resume_experience': resume_exp,
-                'required_experience': jd_exp,
-                'category_breakdown': category_scores,
-                'total_jd_requirements': sum(len(reqs) for reqs in jd_requirements.values()),
-                'total_matches': sum(len(cat['matches']) for cat in category_scores.values()),
-                'domain_conflicts': domain_conflicts
-            }
-            
-        except Exception as e:
-            print(f"Error in calculate_match_score: {e}")
-            return {
-                'overall_score': 0,
-                'skill_score': 0,
-                'experience_score': 0,
-                'recommendation': 'ERROR',
-                'status': '❌',
-                'reason': f'Analysis error: {str(e)}',
-                'resume_experience': 0,
-                'required_experience': 0,
-                'category_breakdown': {},
-                'total_jd_requirements': 0,
-                'total_matches': 0,
-                'domain_conflicts': []
-            }
+    def compare_domains(self, resume_text: str, jd_text: str) -> Dict:
+        """Compare domains between resume and JD"""
+        
+        resume_domain = self.detect_domain(resume_text)
+        jd_domain = self.detect_domain(jd_text)
+        
+        # Determine if domains match
+        domains_match = resume_domain['primary_domain'] == jd_domain['primary_domain']
+        
+        # Determine recommendation
+        if resume_domain['primary_domain'] == 'unknown' or jd_domain['primary_domain'] == 'unknown':
+            recommendation = "MANUAL REVIEW"
+            status = "⚠️"
+            reason = "Unable to clearly identify domain from text"
+        elif domains_match:
+            recommendation = "DOMAIN MATCH - PROCEED"
+            status = "✅"
+            reason = f"Both resume and JD are in {resume_domain['domain_name']} domain"
+        else:
+            recommendation = "DOMAIN MISMATCH - DO NOT SEND"
+            status = "❌"
+            reason = f"Resume is {resume_domain['domain_name']} but JD requires {jd_domain['domain_name']}"
+        
+        return {
+            'recommendation': recommendation,
+            'status': status,
+            'reason': reason,
+            'domains_match': domains_match,
+            'resume_domain': resume_domain,
+            'jd_domain': jd_domain
+        }
 
 # Initialize matcher
-matcher = ResumeJDMatcher()
+matcher = DomainMatcher()
 
 @app.route('/')
 def index():
@@ -443,7 +182,7 @@ def index():
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Resume-JD Matcher</title>
+    <title>Domain Matcher - Phase 1</title>
     <style>
         body {
             font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
@@ -462,6 +201,13 @@ def index():
             color: #2c3e50;
             text-align: center;
             margin-bottom: 30px;
+        }
+        .phase-info {
+            background: #e3f2fd;
+            padding: 15px;
+            border-radius: 5px;
+            margin: 15px 0;
+            border-left: 4px solid #2196f3;
         }
         .upload-section {
             display: grid;
@@ -516,26 +262,40 @@ def index():
             border-radius: 8px;
             display: none;
         }
-        .send { background-color: #d4edda; border: 1px solid #c3e6cb; }
-        .maybe { background-color: #fff3cd; border: 1px solid #ffeaa7; }
-        .reject { background-color: #f8d7da; border: 1px solid #f5c6cb; }
-        .score-grid {
-            display: grid;
-            grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
-            gap: 15px;
-            margin: 20px 0;
-        }
-        .score-card {
+        .match { background-color: #d4edda; border: 1px solid #c3e6cb; }
+        .mismatch { background-color: #f8d7da; border: 1px solid #f5c6cb; }
+        .review { background-color: #fff3cd; border: 1px solid #ffeaa7; }
+        .domain-card {
             background: white;
             padding: 15px;
             border-radius: 8px;
-            text-align: center;
+            margin: 10px 0;
             box-shadow: 0 2px 4px rgba(0,0,0,0.1);
         }
-        .score-value {
-            font-size: 24px;
-            font-weight: bold;
-            color: #2c3e50;
+        .confidence-bar {
+            background: #f0f0f0;
+            height: 20px;
+            border-radius: 10px;
+            margin: 10px 0;
+            overflow: hidden;
+        }
+        .confidence-fill {
+            height: 100%;
+            background: linear-gradient(90deg, #e74c3c, #f39c12, #27ae60);
+            transition: width 0.3s ease;
+        }
+        .keywords {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 5px;
+            margin: 10px 0;
+        }
+        .keyword {
+            background: #e8f4f8;
+            padding: 3px 8px;
+            border-radius: 12px;
+            font-size: 12px;
+            border: 1px solid #bee5eb;
         }
         .loading {
             display: none;
@@ -555,28 +315,20 @@ def index():
             0% { transform: rotate(0deg); }
             100% { transform: rotate(360deg); }
         }
-        .details {
-            margin-top: 20px;
-            padding: 15px;
-            background: #f8f9fa;
-            border-radius: 8px;
-        }
-        .file-tip {
-            background: #e8f4f8;
-            padding: 15px;
-            border-radius: 5px;
-            margin: 15px 0;
-            border-left: 4px solid #3498db;
-        }
     </style>
 </head>
 <body>
     <div class="container">
-        <h1>🎯 Resume-JD Matcher</h1>
+        <h1>🎯 Domain Matcher - Phase 1</h1>
         
-        <div class="file-tip">
-            <strong>📝 Text-Based Matching:</strong> This tool analyzes text content to match resumes with job descriptions. 
-            Simply paste the resume and job description text in the boxes below for accurate matching.
+        <div class="phase-info">
+            <strong>📋 Phase 1: Domain Detection Only</strong><br>
+            This version focuses purely on identifying whether the resume and job description are in the same domain:
+            <ul style="margin: 10px 0; padding-left: 20px;">
+                <li><strong>Design Verification (DV):</strong> UVM, testbench, verification, coverage, assertions</li>
+                <li><strong>Physical Design (PD):</strong> Place & route, floorplan, timing closure, ICC2, STA</li>
+                <li><strong>RTL Design:</strong> Verilog, synthesis, architecture, logic design</li>
+            </ul>
         </div>
         
         <form id="matchForm">
@@ -596,31 +348,28 @@ def index():
                 </div>
             </div>
             
-            <button type="submit">🔍 Analyze Match</button>
+            <button type="submit">🔍 Check Domain Match</button>
         </form>
         
         <div class="loading" id="loading">
             <div class="spinner"></div>
-            <p>Analyzing match...</p>
+            <p>Analyzing domains...</p>
         </div>
         
         <div class="results" id="results">
             <h2 id="recommendation"></h2>
-            <div class="score-grid">
-                <div class="score-card">
-                    <div class="score-value" id="overallScore"></div>
-                    <div>Overall Match</div>
+            <p id="reason"></p>
+            
+            <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 20px; margin-top: 20px;">
+                <div class="domain-card">
+                    <h4>📄 Resume Domain</h4>
+                    <div id="resumeDomain"></div>
                 </div>
-                <div class="score-card">
-                    <div class="score-value" id="skillScore"></div>
-                    <div>Skills Match</div>
-                </div>
-                <div class="score-card">
-                    <div class="score-value" id="expScore"></div>
-                    <div>Experience Match</div>
+                <div class="domain-card">
+                    <h4>📋 JD Domain</h4>
+                    <div id="jdDomain"></div>
                 </div>
             </div>
-            <div class="details" id="details"></div>
         </div>
     </div>
 
@@ -643,139 +392,72 @@ def index():
                 });
                 
                 if (!response.ok) {
-                    const errorText = await response.text();
-                    throw new Error(`Server error (${response.status}): ${errorText}`);
+                    throw new Error(`Server error (${response.status})`);
                 }
                 
                 const data = await response.json();
                 
-                console.log('Received data:', data);
-                
                 if (data.error) {
-                    let errorMsg = 'Analysis Error: ' + data.error;
-                    if (data.suggestion) {
-                        errorMsg += '\\n\\nSuggestion: ' + data.suggestion;
-                    }
-                    alert(errorMsg);
+                    alert('Error: ' + data.error);
                     return;
                 }
                 
-                // Ensure all required properties exist with defaults
-                const safeData = {
-                    overall_score: Number(data.overall_score) || 0,
-                    skill_score: Number(data.skill_score) || 0,
-                    experience_score: Number(data.experience_score) || 0,
-                    recommendation: String(data.recommendation || 'ERROR'),
-                    status: String(data.status || '❌'),
-                    reason: String(data.reason || 'Unknown error'),
-                    resume_experience: Number(data.resume_experience) || 0,
-                    required_experience: Number(data.required_experience) || 0,
-                    category_breakdown: data.category_breakdown || {},
-                    total_matches: Number(data.total_matches) || 0,
-                    total_jd_requirements: Number(data.total_jd_requirements) || 0,
-                    domain_conflicts: data.domain_conflicts || []
-                };
-                
-                // Validate data ranges
-                safeData.overall_score = Math.max(0, Math.min(100, safeData.overall_score));
-                safeData.skill_score = Math.max(0, Math.min(100, safeData.skill_score));
-                safeData.experience_score = Math.max(0, Math.min(100, safeData.experience_score));
-                
-                // Update results
-                document.getElementById('recommendation').textContent = 
-                    safeData.status + ' ' + safeData.recommendation;
-                document.getElementById('overallScore').textContent = safeData.overall_score.toFixed(1) + '%';
-                document.getElementById('skillScore').textContent = safeData.skill_score.toFixed(1) + '%';
-                document.getElementById('expScore').textContent = safeData.experience_score.toFixed(1) + '%';
+                // Update recommendation
+                document.getElementById('recommendation').textContent = data.status + ' ' + data.recommendation;
+                document.getElementById('reason').textContent = data.reason;
                 
                 // Set result styling
                 results.className = 'results';
-                if (safeData.recommendation.includes('SEND') && !safeData.recommendation.includes('NOT')) {
-                    if (safeData.recommendation.includes('MAYBE')) {
-                        results.classList.add('maybe');
-                    } else {
-                        results.classList.add('send');
-                    }
+                if (data.domains_match) {
+                    results.classList.add('match');
+                } else if (data.recommendation.includes('MANUAL')) {
+                    results.classList.add('review');
                 } else {
-                    results.classList.add('reject');
+                    results.classList.add('mismatch');
                 }
                 
-                // Build details HTML
-                let detailsHtml = '<h3>Analysis Details:</h3>';
-                detailsHtml += `<p><strong>Recommendation Reason:</strong> ${safeData.reason}</p>`;
-                detailsHtml += `<p><strong>Experience:</strong> Candidate has ${safeData.resume_experience} years, Required: ${safeData.required_experience} years</p>`;
+                // Update domain cards
+                updateDomainCard('resumeDomain', data.resume_domain);
+                updateDomainCard('jdDomain', data.jd_domain);
                 
-                // Show domain conflicts first - CRITICAL
-                if (safeData.domain_conflicts && safeData.domain_conflicts.length > 0) {
-                    detailsHtml += '<h4>🚨 CRITICAL DOMAIN MISMATCH:</h4>';
-                    safeData.domain_conflicts.forEach(conflict => {
-                        detailsHtml += `<div style="background: #ffebee; border: 2px solid #f44336; padding: 15px; border-radius: 5px; margin: 10px 0;">`;
-                        detailsHtml += `<strong style="color: #d32f2f;">❌ ${conflict.message}</strong><br>`;
-                        detailsHtml += `<p style="margin: 5px 0;"><strong>Issue:</strong> ${conflict.details}</p>`;
-                        detailsHtml += `<p style="margin: 5px 0;"><strong>JD Domain:</strong> ${conflict.jd_domain}</p>`;
-                        detailsHtml += `<p style="margin: 5px 0;"><strong>Resume Domain:</strong> ${conflict.resume_domain}</p>`;
-                        detailsHtml += '</div>';
-                    });
-                }
-                
-                // Show category breakdown
-                try {
-                    if (safeData.category_breakdown && typeof safeData.category_breakdown === 'object') {
-                        const categories = Object.keys(safeData.category_breakdown);
-                        if (categories.length > 0) {
-                            detailsHtml += '<h4>📊 Category Breakdown:</h4>';
-                            categories.forEach(category => {
-                                const breakdown = safeData.category_breakdown[category];
-                                if (breakdown && typeof breakdown === 'object') {
-                                    const categoryName = category.replace(/_/g, ' ').toUpperCase();
-                                    const weight = Number(breakdown.weight) || 1;
-                                    const score = Number(breakdown.score) || 0;
-                                    const totalReqs = Number(breakdown.total_requirements) || 0;
-                                    const matches = Array.isArray(breakdown.matches) ? breakdown.matches : [];
-                                    const missing = Array.isArray(breakdown.missing) ? breakdown.missing : [];
-                                    
-                                    detailsHtml += `<div style="margin: 10px 0; padding: 10px; background: #f8f9fa; border-radius: 5px;">`;
-                                    detailsHtml += `<strong>${categoryName}</strong> (Weight: ${weight}x) - Score: ${score.toFixed(1)}%<br>`;
-                                    detailsHtml += `<small>Requirements: ${totalReqs} | Matched: ${matches.length}</small><br>`;
-                                    
-                                    if (matches.length > 0) {
-                                        const displayMatches = matches.slice(0, 5);
-                                        detailsHtml += `✅ <span style="color: green;">Matched:</span> ${displayMatches.join(', ')}`;
-                                        if (matches.length > 5) detailsHtml += ` +${matches.length - 5} more`;
-                                        detailsHtml += '<br>';
-                                    }
-                                    
-                                    if (missing.length > 0) {
-                                        const displayMissing = missing.slice(0, 5);
-                                        detailsHtml += `❌ <span style="color: red;">Missing:</span> ${displayMissing.join(', ')}`;
-                                        if (missing.length > 5) detailsHtml += ` +${missing.length - 5} more`;
-                                    }
-                                    detailsHtml += '</div>';
-                                }
-                            });
-                            
-                            detailsHtml += `<p><strong>Summary:</strong> ${safeData.total_matches}/${safeData.total_jd_requirements} total requirements matched</p>`;
-                        } else {
-                            detailsHtml += '<p>No categories found in analysis.</p>';
-                        }
-                    } else {
-                        detailsHtml += '<p>No detailed breakdown available.</p>';
-                    }
-                } catch (breakdownError) {
-                    console.error('Error building breakdown:', breakdownError);
-                    detailsHtml += '<p>Error displaying detailed breakdown. Check console for details.</p>';
-                }
-                
-                document.getElementById('details').innerHTML = detailsHtml;
                 results.style.display = 'block';
                 
             } catch (error) {
-                console.error('Complete error details:', error);
-                alert(`Analysis failed: ${error.message}\\n\\nPlease check that both resume and job description text are provided.`);
+                alert('Analysis failed: ' + error.message);
             } finally {
                 loading.style.display = 'none';
             }
         });
+        
+        function updateDomainCard(elementId, domainData) {
+            const element = document.getElementById(elementId);
+            const confidence = domainData.confidence || 0;
+            
+            let html = `
+                <div><strong>Detected Domain:</strong> ${domainData.domain_name}</div>
+                <div><strong>Confidence:</strong> ${confidence}% (${domainData.score}/${domainData.total_keywords} keywords)</div>
+                <div class="confidence-bar">
+                    <div class="confidence-fill" style="width: ${confidence}%"></div>
+                </div>
+            `;
+            
+            if (domainData.matched_keywords && domainData.matched_keywords[domainData.primary_domain]) {
+                const keywords = domainData.matched_keywords[domainData.primary_domain];
+                if (keywords.length > 0) {
+                    html += '<div><strong>Matched Keywords:</strong></div>';
+                    html += '<div class="keywords">';
+                    keywords.slice(0, 10).forEach(keyword => {
+                        html += `<span class="keyword">${keyword}</span>`;
+                    });
+                    if (keywords.length > 10) {
+                        html += `<span class="keyword">+${keywords.length - 10} more</span>`;
+                    }
+                    html += '</div>';
+                }
+            }
+            
+            element.innerHTML = html;
+        }
     </script>
 </body>
 </html>
@@ -794,14 +476,10 @@ def analyze():
             resume_path = os.path.join(app.config['UPLOAD_FOLDER'], filename)
             resume_file.save(resume_path)
             resume_text = matcher.extract_text(resume_path)
-            os.remove(resume_path)  # Clean up
+            os.remove(resume_path)
             
-            # Check if extraction failed
             if resume_text.startswith('Error') or resume_text.startswith('No'):
-                return jsonify({
-                    'error': f'File processing issue: {resume_text}',
-                    'suggestion': 'Try copy-pasting the text directly into the text area.'
-                })
+                return jsonify({'error': f'Resume file issue: {resume_text}'})
                 
         elif request.form.get('resumeText'):
             resume_text = request.form.get('resumeText').strip()
@@ -813,62 +491,28 @@ def analyze():
             jd_path = os.path.join(app.config['UPLOAD_FOLDER'], filename)
             jd_file.save(jd_path)
             jd_text = matcher.extract_text(jd_path)
-            os.remove(jd_path)  # Clean up
+            os.remove(jd_path)
             
             if jd_text.startswith('Error') or jd_text.startswith('No'):
-                return jsonify({
-                    'error': f'JD file processing issue: {jd_text}',
-                    'suggestion': 'Try copy-pasting the text directly.'
-                })
+                return jsonify({'error': f'JD file issue: {jd_text}'})
                 
         elif request.form.get('jdText'):
             jd_text = request.form.get('jdText').strip()
         
         # Validation
-        if not resume_text or len(resume_text) < 10:
-            return jsonify({'error': 'Please provide resume text (at least 10 characters)'})
+        if not resume_text or len(resume_text) < 20:
+            return jsonify({'error': 'Please provide resume text (at least 20 characters)'})
         
-        if not jd_text or len(jd_text) < 10:
-            return jsonify({'error': 'Please provide job description text (at least 10 characters)'})
+        if not jd_text or len(jd_text) < 20:
+            return jsonify({'error': 'Please provide job description text (at least 20 characters)'})
         
-        # Analyze match
-        results = matcher.calculate_match_score(resume_text, jd_text)
-        
-        # Validate results
-        if not isinstance(results, dict):
-            return jsonify({'error': 'Analysis failed - invalid results format'})
-        
+        # Analyze domains
+        results = matcher.compare_domains(resume_text, jd_text)
         return jsonify(results)
         
     except Exception as e:
         print(f"Error in analyze endpoint: {str(e)}")
-        import traceback
-        traceback.print_exc()
-        
-        return jsonify({
-            'error': f'Server error during analysis: {str(e)}',
-            'overall_score': 0,
-            'skill_score': 0,
-            'experience_score': 0,
-            'recommendation': 'ERROR',
-            'status': '❌',
-            'reason': 'Analysis failed due to server error'
-        })
-
-@app.route('/api/analyze', methods=['POST'])
-def api_analyze():
-    """API endpoint for programmatic access"""
-    try:
-        data = request.get_json()
-        
-        if not data or 'resume' not in data or 'jd' not in data:
-            return jsonify({'error': 'Please provide both resume and jd in JSON format'})
-        
-        results = matcher.calculate_match_score(data['resume'], data['jd'])
-        return jsonify(results)
-        
-    except Exception as e:
-        return jsonify({'error': str(e)})
+        return jsonify({'error': f'Server error: {str(e)}'})
 
 if __name__ == '__main__':
     port = int(os.environ.get('PORT', 5000))
