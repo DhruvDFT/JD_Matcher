@@ -650,16 +650,16 @@ def index():
 </head>
 <body>
     <div class="container">
-        <h1>📋 Multi-Resume Matcher</h1>
+        <h1>Multi-Resume Matcher</h1>
         
         <div class="phase-info">
-            <strong>📋 Batch Analysis:</strong> Upload multiple resumes OR single resume to compare against job description. Includes domain detection, skills analysis, and experience matching.
+            <strong>Batch Analysis:</strong> Upload multiple resumes OR single resume to compare against job description. Includes domain detection, skills analysis, and experience matching.
         </div>
         
         <form id="matchForm">
             <div class="upload-section">
                 <div class="resume-upload-area">
-                    <h3>📄 Resumes (Multiple Upload)</h3>
+                    <h3>Resumes (Multiple Upload)</h3>
                     <input type="file" id="resumes" name="resumes" accept=".pdf,.docx,.txt" multiple>
                     <div class="resume-files-list" id="resumeFilesList"></div>
                     <p style="margin: 10px 0;">Or upload single resume:</p>
@@ -669,23 +669,23 @@ def index():
                 </div>
                 
                 <div class="domain-card">
-                    <h4>📋 JD Domain</h4>
+                    <h4>JD Domain</h4>
                     <div id="jdDomain"></div>
                 </div>
             </div>
             
             <div class="domain-card">
-                <h4>📊 Complete Analysis</h4>
+                <h4>Complete Analysis</h4>
                 <div class="analysis-text" id="analysisText"></div>
             </div>
         </div>
         
         <!-- Multiple resume results -->
         <div class="multiple-results" id="multipleResults">
-            <h2>📊 Batch Analysis Results</h2>
+            <h2>Batch Analysis Results</h2>
             <div id="resultsContainer"></div>
             <div class="domain-card">
-                <h4>📋 Job Description Summary</h4>
+                <h4>Job Description Summary</h4>
                 <div id="jdSummary"></div>
             </div>
         </div>
@@ -778,7 +778,7 @@ def index():
                         <strong>Resume Domain:</strong> ${data.resume_domain.domain_name} (${data.resume_domain.confidence}%)
                     </div>
                     <details style="margin-top: 10px;">
-                        <summary style="cursor: pointer; font-weight: bold;">📊 View Detailed Analysis</summary>
+                        <summary style="cursor: pointer; font-weight: bold;">View Detailed Analysis</summary>
                         <div class="analysis-text" style="margin-top: 10px; font-size: 12px;">
                             ${data.analysis_text || 'No detailed analysis available'}
                         </div>
@@ -1008,7 +1008,7 @@ ${data.debug_info}`);
                 document.getElementById('jdSummary').innerHTML = `
                     <div><strong>Required Domain:</strong> ${firstSuccessfulResult.jd_domain.domain_name}</div>
                     <div><strong>Confidence:</strong> ${firstSuccessfulResult.jd_domain.confidence}%</div>
-                    <div style="margin-top: 15px;"><strong>📊 Summary:</strong></div>
+                    <div style="margin-top: 15px;"><strong>Summary:</strong></div>
                     <div>• <span style="color: #27ae60;">Strong Matches (75%+):</span> ${strongMatches}</div>
                     <div>• <span style="color: #f39c12;">Good Matches (60-74%):</span> ${goodMatches}</div>
                     <div>• <span style="color: #e74c3c;">Weak Matches (<60%):</span> ${weakMatches}</div>
@@ -1106,8 +1106,8 @@ if __name__ == '__main__':
     port = int(os.environ.get('PORT', 5000))
     app.run(host='0.0.0.0', port=port, debug=False)</div>
             
-            <button type="submit">🔍 Analyze All Resumes</button>
-            <button type="button" onclick="testExperience()" style="background-color: #f39c12; margin-left: 10px;">🔧 Test Experience Extraction</button>
+            <button type="submit">Analyze Resume(s)</button>
+            <button type="button" onclick="testExperience()" style="background-color: #f39c12; margin-left: 10px;">Test Experience Extraction</button>
         </form>
         
         <div class="loading" id="loading">
@@ -1127,7 +1127,7 @@ if __name__ == '__main__':
             
             <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 20px; margin-top: 20px;">
                 <div class="domain-card">
-                    <h4>📄 Resume Domain</h4>
+                    <h4>Resume Domain</h4>
                     <div id="resumeDomain"></div>
                 </div>
                 <div class="domain-card">
