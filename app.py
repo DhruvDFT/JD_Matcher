@@ -562,6 +562,45 @@ def index():
             0% { transform: rotate(0deg); }
             100% { transform: rotate(360deg); }
         }
+        
+        /* Progress indicator styles */
+        .progress-container {
+            display: none;
+            margin: 20px 0;
+            text-align: center;
+        }
+        .progress-bar {
+            width: 100%;
+            height: 25px;
+            background-color: #f0f0f0;
+            border-radius: 12px;
+            overflow: hidden;
+            margin: 10px 0;
+            box-shadow: inset 0 2px 4px rgba(0,0,0,0.1);
+        }
+        .progress-fill {
+            height: 100%;
+            background: linear-gradient(90deg, #3498db, #2ecc71);
+            border-radius: 12px;
+            transition: width 0.3s ease;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            color: white;
+            font-weight: bold;
+            font-size: 12px;
+        }
+        .progress-text {
+            margin: 10px 0;
+            font-weight: bold;
+            color: #2c3e50;
+        }
+        .current-file {
+            margin: 5px 0;
+            font-size: 14px;
+            color: #666;
+            font-style: italic;
+        }
         .analysis-text {
             background: #f8f9fa;
             padding: 15px;
@@ -617,6 +656,14 @@ def index():
             <p>Analyzing resumes...</p>
         </div>
         
+        <div class="progress-container" id="progressContainer">
+            <div class="progress-text" id="progressText">Processing resumes...</div>
+            <div class="progress-bar">
+                <div class="progress-fill" id="progressFill">0%</div>
+            </div>
+            <div class="current-file" id="currentFile">Preparing analysis...</div>
+        </div>
+        
         <div class="results" id="results">
             <h2 id="recommendation"></h2>
             <p id="reason"></p>
@@ -658,8 +705,20 @@ def index():
         
         document.getElementById('resumes').addEventListener('change', function(e) {
             const files = Array.from(e.target.files);
-            selectedResumeFiles = [...selectedResumeFiles, ...files];
+            const availableSlots = 20 - selectedResumeFiles.length;
+            
+            if (files.length > availableSlots) {
+                alert(`You can only select ${availableSlots} more files. Maximum limit is 20 files.`);
+                const filesToAdd = files.slice(0, availableSlots);
+                selectedResumeFiles = [...selectedResumeFiles, ...filesToAdd];
+            } else {
+                selectedResumeFiles = [...selectedResumeFiles, ...files];
+            }
+            
             updateResumeFilesList();
+            
+            // Reset the input to allow selecting more files
+            this.value = '';
         });
         
         function updateResumeFilesList() {
@@ -671,6 +730,12 @@ def index():
                 return;
             }
             
+            // Add file count indicator
+            const countIndicator = document.createElement('div');
+            countIndicator.style.cssText = 'margin-bottom: 10px; font-weight: bold; color: #2c3e50;';
+            countIndicator.innerHTML = `${selectedResumeFiles.length}/20 files selected`;
+            container.appendChild(countIndicator);
+            
             selectedResumeFiles.forEach((file, index) => {
                 const fileItem = document.createElement('div');
                 fileItem.className = 'resume-file-item';
@@ -680,6 +745,14 @@ def index():
                 `;
                 container.appendChild(fileItem);
             });
+            
+            // Show warning if near limit
+            if (selectedResumeFiles.length >= 18) {
+                const warningDiv = document.createElement('div');
+                warningDiv.style.cssText = 'margin-top: 10px; padding: 8px; background: #fff3cd; border: 1px solid #ffeaa7; border-radius: 4px; font-size: 12px; color: #856404;';
+                warningDiv.innerHTML = `⚠️ Approaching limit: ${20 - selectedResumeFiles.length} slots remaining`;
+                container.appendChild(warningDiv);
+            }
         }
         
         function removeResumeFile(index) {
@@ -689,19 +762,26 @@ def index():
 
         function updateDomainCard(elementId, domainData) {
             const element = document.getElementById(elementId);
+            
+            // Safe check for domainData
+            if (!domainData) {
+                element.innerHTML = '<div>No domain data available</div>';
+                return;
+            }
+            
             const confidence = domainData.confidence || 0;
             
             let html = `
-                <div><strong>Detected Domain:</strong> ${domainData.domain_name}</div>
-                <div><strong>Confidence:</strong> ${confidence}% (${domainData.score}/${domainData.total_keywords} keywords)</div>
+                <div><strong>Detected Domain:</strong> ${domainData.domain_name || 'Unknown'}</div>
+                <div><strong>Confidence:</strong> ${confidence}% (${domainData.score || 0}/${domainData.total_keywords || 0} keywords)</div>
                 <div class="confidence-bar">
                     <div class="confidence-fill" style="width: ${confidence}%"></div>
                 </div>
             `;
             
-            if (domainData.matched_keywords && domainData.matched_keywords[domainData.primary_domain]) {
+            if (domainData.matched_keywords && domainData.primary_domain && domainData.matched_keywords[domainData.primary_domain]) {
                 const keywords = domainData.matched_keywords[domainData.primary_domain];
-                if (keywords.length > 0) {
+                if (keywords && keywords.length > 0) {
                     html += '<div><strong>Matched Keywords:</strong></div>';
                     html += '<div class="keywords">';
                     keywords.slice(0, 10).forEach(keyword => {
@@ -721,6 +801,10 @@ def index():
             const resultClass = data.domains_match && (data.final_score || 0) >= 60 ? 'match' :
                                data.recommendation && (data.recommendation.includes('MANUAL') || data.recommendation.includes('MAYBE')) ? 'review' : 'mismatch';
             
+            // Safe access to domain data
+            const resumeDomainName = data.resume_domain ? data.resume_domain.domain_name : 'Unknown';
+            const resumeConfidence = data.resume_domain ? data.resume_domain.confidence : 0;
+            
             return `
                 <div class="result-card ${resultClass}">
                     <div class="result-header">
@@ -730,13 +814,13 @@ def index():
                         </div>
                     </div>
                     <div style="margin: 10px 0;">
-                        <strong>${data.status} ${data.recommendation}</strong>
+                        <strong>${data.status || 'ERROR'} ${data.recommendation || 'PROCESSING ERROR'}</strong>
                     </div>
                     <div style="margin: 10px 0; color: #666;">
-                        ${data.reason}
+                        ${data.reason || 'Analysis failed'}
                     </div>
                     <div style="margin-top: 15px;">
-                        <strong>Resume Domain:</strong> ${data.resume_domain.domain_name} (${data.resume_domain.confidence}%)
+                        <strong>Resume Domain:</strong> ${resumeDomainName} (${resumeConfidence}%)
                     </div>
                     <details style="margin-top: 10px;">
                         <summary style="cursor: pointer; font-weight: bold;">View Detailed Analysis</summary>
@@ -788,12 +872,12 @@ ${data.debug_info}`);
             e.preventDefault();
             
             const loading = document.getElementById('loading');
+            const progressContainer = document.getElementById('progressContainer');
             const results = document.getElementById('results');
             const multipleResults = document.getElementById('multipleResults');
             
             results.style.display = 'none';
             multipleResults.style.display = 'none';
-            loading.style.display = 'block';
             
             try {
                 const hasMultipleFiles = selectedResumeFiles.length > 0;
@@ -801,8 +885,14 @@ ${data.debug_info}`);
                 const hasResumeText = document.getElementById('resumeText').value.trim();
                 
                 if (hasMultipleFiles) {
+                    // Show progress bar for multiple files
+                    progressContainer.style.display = 'block';
+                    loading.style.display = 'none';
                     await processMultipleResumes();
                 } else if (hasSingleFile || hasResumeText) {
+                    // Show simple loading for single file
+                    loading.style.display = 'block';
+                    progressContainer.style.display = 'none';
                     await processSingleResume();
                 } else {
                     throw new Error('Please provide at least one resume (file or text)');
@@ -813,6 +903,7 @@ ${data.debug_info}`);
                 alert('Analysis failed: ' + error.message);
             } finally {
                 loading.style.display = 'none';
+                progressContainer.style.display = 'none';
             }
         });
         
@@ -846,10 +937,19 @@ ${data.debug_info}`);
             }
             
             const results = [];
+            const totalFiles = selectedResumeFiles.length;
+            
+            // Initialize progress
+            updateProgress(0, totalFiles, 'Starting analysis...');
             
             for (let i = 0; i < selectedResumeFiles.length; i++) {
+                const currentFile = selectedResumeFiles[i];
+                
+                // Update progress
+                updateProgress(i, totalFiles, `Processing: ${currentFile.name}`);
+                
                 const formData = new FormData();
-                formData.append('resume', selectedResumeFiles[i]);
+                formData.append('resume', currentFile);
                 
                 if (jdFile) {
                     formData.append('jd', jdFile);
@@ -871,7 +971,7 @@ ${data.debug_info}`);
                     
                     if (data.error) {
                         results.push({
-                            filename: selectedResumeFiles[i].name,
+                            filename: currentFile.name,
                             error: data.error,
                             status: 'ERROR',
                             recommendation: 'ERROR',
@@ -880,13 +980,13 @@ ${data.debug_info}`);
                         });
                     } else {
                         results.push({
-                            filename: selectedResumeFiles[i].name,
+                            filename: currentFile.name,
                             ...data
                         });
                     }
                 } catch (error) {
                     results.push({
-                        filename: selectedResumeFiles[i].name,
+                        filename: currentFile.name,
                         error: error.message,
                         status: 'ERROR',
                         recommendation: 'ERROR',
@@ -894,16 +994,36 @@ ${data.debug_info}`);
                         final_score: 0
                     });
                 }
+                
+                // Update progress after each file
+                updateProgress(i + 1, totalFiles, i + 1 === totalFiles ? 'Finalizing results...' : `Completed: ${currentFile.name}`);
+                
+                // Small delay to show progress
+                await new Promise(resolve => setTimeout(resolve, 100));
             }
             
             displayMultipleResults(results);
         }
         
+        function updateProgress(current, total, message) {
+            const progressFill = document.getElementById('progressFill');
+            const progressText = document.getElementById('progressText');
+            const currentFile = document.getElementById('currentFile');
+            
+            const percentage = Math.round((current / total) * 100);
+            
+            progressFill.style.width = percentage + '%';
+            progressFill.textContent = percentage + '%';
+            progressText.textContent = `Processing ${current} of ${total} resumes`;
+            currentFile.textContent = message;
+        }
+        
         function displaySingleResult(data) {
             const results = document.getElementById('results');
             
-            document.getElementById('recommendation').textContent = data.status + ' ' + data.recommendation;
-            document.getElementById('reason').textContent = data.reason;
+            // Safe access to data properties
+            document.getElementById('recommendation').textContent = (data.status || 'ERROR') + ' ' + (data.recommendation || 'ANALYSIS FAILED');
+            document.getElementById('reason').textContent = data.reason || 'Analysis could not be completed';
             
             if (data.final_score !== undefined && data.final_score > 0) {
                 document.getElementById('overallScore').style.display = 'block';
@@ -921,11 +1041,14 @@ ${data.debug_info}`);
                 results.classList.add('mismatch');
             }
             
+            // Safe domain card updates
             updateDomainCard('resumeDomain', data.resume_domain);
             updateDomainCard('jdDomain', data.jd_domain);
             
             if (data.analysis_text) {
                 document.getElementById('analysisText').textContent = data.analysis_text;
+            } else {
+                document.getElementById('analysisText').textContent = 'Analysis data not available';
             }
             
             results.style.display = 'block';
@@ -952,15 +1075,26 @@ ${data.debug_info}`);
             
             const firstSuccessfulResult = results.find(r => !r.error && r.jd_domain);
             if (firstSuccessfulResult) {
+                const jdDomain = firstSuccessfulResult.jd_domain;
                 document.getElementById('jdSummary').innerHTML = `
-                    <div><strong>Required Domain:</strong> ${firstSuccessfulResult.jd_domain.domain_name}</div>
-                    <div><strong>Confidence:</strong> ${firstSuccessfulResult.jd_domain.confidence}%</div>
+                    <div><strong>Required Domain:</strong> ${jdDomain.domain_name || 'Unknown'}</div>
+                    <div><strong>Confidence:</strong> ${jdDomain.confidence || 0}%</div>
                     <div style="margin-top: 15px;"><strong>Summary:</strong></div>
                     <div>• <span style="color: #27ae60;">Strong Matches (75%+):</span> ${strongMatches}</div>
                     <div>• <span style="color: #f39c12;">Good Matches (60-74%):</span> ${goodMatches}</div>
                     <div>• <span style="color: #e74c3c;">Weak Matches (<60%):</span> ${weakMatches}</div>
                     ${errors > 0 ? `<div>• <span style="color: #95a5a6;">Errors:</span> ${errors}</div>` : ''}
                     <div style="margin-top: 10px;"><strong>Total Processed:</strong> ${totalResumes} resumes</div>
+                `;
+            } else {
+                document.getElementById('jdSummary').innerHTML = `
+                    <div><strong>Analysis Summary:</strong></div>
+                    <div>• <span style="color: #27ae60;">Strong Matches (75%+):</span> ${strongMatches}</div>
+                    <div>• <span style="color: #f39c12;">Good Matches (60-74%):</span> ${goodMatches}</div>
+                    <div>• <span style="color: #e74c3c;">Weak Matches (<60%):</span> ${weakMatches}</div>
+                    ${errors > 0 ? `<div>• <span style="color: #95a5a6;">Errors:</span> ${errors}</div>` : ''}
+                    <div style="margin-top: 10px;"><strong>Total Processed:</strong> ${totalResumes} resumes</div>
+                    <div style="margin-top: 10px; color: #666;"><em>Unable to determine job requirements from provided description</em></div>
                 `;
             }
             
